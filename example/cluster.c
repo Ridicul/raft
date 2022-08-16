@@ -6,8 +6,22 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include "../include/raft.h"
+#include "server.c"
 
 #define N_SERVERS 3 /* Number of servers in the example cluster */
+
+/* Hold a map of the entire cluster. */
+struct cluster_map {
+    struct raft_configuration cluster_config;    /* */
+    struct Server *servers;                      /* */
+    int n;                                       /* */
+
+};
+
+static int clusterMapInit(struct cluster_map *clusterMap) {
+
+}
 
 static int ensureDir(const char *dir)
 {
@@ -34,6 +48,7 @@ static int ensureDir(const char *dir)
     }
     return 0;
 }
+
 static void forkServer(const char *topLevelDir, unsigned i, pid_t *pid)
 {
     *pid = fork();

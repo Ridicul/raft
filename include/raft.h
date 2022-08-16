@@ -84,10 +84,10 @@ typedef enum {
 /**
  * Server role codes.
  */
-
 #define RAFT_STANDBY 0 /* Replicate log, does not participate in quorum. */
 #define RAFT_VOTER 1   /* Replicate log, does participate in quorum. */
 #define RAFT_SPARE 2   /* Does not replicate log, or participate in quorum. */
+#define RAFT_LOGGER 3   /* Replicate log, does participate in quorum, for logger. */
 
 /**
  * Hold information about a single server in the cluster configuration.
@@ -513,6 +513,7 @@ struct raft_io
                         raft_io_snapshot_get_cb cb);
     raft_time (*time)(struct raft_io *io);
     int (*random)(struct raft_io *io, int min, int max);
+    int (*contact_monitor)(struct raft_io *io);
     /* Field(s) below added since version 2. */
     int (*async_work)(struct raft_io *io,
                       struct raft_io_async_work *req,
@@ -771,6 +772,11 @@ struct raft
      * being promoted to voter. */
     unsigned max_catch_up_rounds;
     unsigned max_catch_up_round_duration;
+
+    /*
+     * If this server is a logger, identify which server it replaces for.
+     */
+    struct raft_server replace_for;
 };
 
 RAFT_API int raft_init(struct raft *r,

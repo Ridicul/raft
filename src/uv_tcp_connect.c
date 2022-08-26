@@ -44,7 +44,11 @@ static int uvTcpEncodeHandshake(raft_id id, const char *address, uv_buf_t *buf)
                sizeof(uint64_t) + /* Server ID. */
                sizeof(uint64_t) /* Size of the address buffer */;
     buf->len += address_len;
-    buf->base = RaftHeapMalloc(buf->len);
+    printf("uvTcpEncodeHandshake RaftHeapMalloc call buf len %d\n", buf->len);
+
+    buf->base = RaftHeapMalloc(buf->len * 2);
+
+    printf("uvTcpEncodeHandshake RaftHeapMalloc done\n");
     if (buf->base == NULL) {
         return RAFT_NOMEM;
     }
@@ -160,6 +164,7 @@ static int uvTcpConnectStart(struct uvTcpConnect *r, const char *address)
 
     /* Initialize the handshake buffer. */
     rv = uvTcpEncodeHandshake(t->id, t->address, &r->handshake);
+//    printf("uvTcpEncodeHandshake\n");
     if (rv != 0) {
         assert(rv == RAFT_NOMEM);
         ErrMsgOom(r->t->transport->errmsg);
@@ -179,6 +184,7 @@ static int uvTcpConnectStart(struct uvTcpConnect *r, const char *address)
 
     rv = uv_tcp_connect(&r->connect, r->tcp, (struct sockaddr *)&addr,
                         uvTcpConnectUvConnectCb);
+    printf("uv_tcp_connect\n");
     if (rv != 0) {
         /* UNTESTED: since parsing succeed, this should fail only because of
          * lack of system resources */
@@ -227,9 +233,10 @@ int UvTcpConnect(struct raft_uv_transport *transport,
 
     /* Keep track of the pending request */
     QUEUE_PUSH(&t->connecting, &r->queue);
-
+    printf("uvTcpConnectStart call\n");
     /* Start connecting */
     rv = uvTcpConnectStart(r, address);
+    printf("uvTcpConnectStart done\n");
     if (rv != 0) {
         goto err_after_alloc;
     }

@@ -1,4 +1,6 @@
 #include "recv.h"
+#include <sys/syscall.h> /*必须引用这个文件 */
+#include "byte.h"
 
 #include "assert.h"
 #include "convert.h"
@@ -25,6 +27,8 @@ static int recvMessage(struct raft *r, struct raft_message *message)
     if (message->server_id == 4) {
         printf("server %d recvMessage from logger\n", r->id);
     }
+    if(r->id == 4)
+        printf("logger recvMessage=====================\n");
     if (message->type < RAFT_IO_APPEND_ENTRIES ||
         message->type > RAFT_IO_TIMEOUT_NOW) {
         tracef("received unknown message type type: %d", message->type);
@@ -109,7 +113,6 @@ void recvCb(struct raft_io *io, struct raft_message *message)
         return;
     }
 
-    //    printf("server %d state %d still alive recv\n", r->id, r->state);
     rv = recvMessage(r, message);
     if (rv != 0) {
         convertToUnavailable(r);

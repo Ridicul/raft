@@ -81,6 +81,7 @@ static int sendAppendEntries(struct raft *r,
     args->prev_log_term = prev_term;
 
     /* TODO: implement a limit to the total size of the entries being sent */
+    //获取log的next_index之后的
     rv = logAcquire(&r->log, next_index, &args->entries, &args->n_entries);
     if (rv != 0) {
         goto err;
@@ -301,10 +302,10 @@ int replicationProgress(struct raft *r, unsigned i)
     assert(next_index >= 1);
 
     if (!progressShouldReplicate(r, i)) {
-        if (server->role == RAFT_LOGGER) {
-            printf("leader %d try send to logger at nextIndex %d failed!\n",
-                   r->id, next_index);
-        }
+//        if (server->role == RAFT_LOGGER) {
+//            printf("leader %d try send to logger at nextIndex %d failed!\n",
+//                   r->id, next_index);
+//        }
         return 0;
     }
 
@@ -351,15 +352,15 @@ int replicationProgress(struct raft *r, unsigned i)
         prev_index = logLastIndex(&r->log);
         prev_term = logLastTerm(&r->log);
     }
-    if (i == 3) {
-        printf(
-            "replicationProgress server index %d,match_index %d,next_index "
-            "%d,recent_recv %d,snapshot_index %d\n",
-            i, r->leader_state.progress[i].match_index,
-            r->leader_state.progress[i].next_index,
-            r->leader_state.progress[i].recent_recv,
-            r->leader_state.progress[i].snapshot_index);
-    }
+//    if (i == 3) {
+//        printf(
+//            "replicationProgress server index %d,match_index %d,next_index "
+//            "%d,recent_recv %d,snapshot_index %d\n",
+//            i, r->leader_state.progress[i].match_index,
+//            r->leader_state.progress[i].next_index,
+//            r->leader_state.progress[i].recent_recv,
+//            r->leader_state.progress[i].snapshot_index);
+//    }
     return sendAppendEntries(r, i, prev_index, prev_term);
 
 send_snapshot:
@@ -434,13 +435,22 @@ static size_t updateLastStored(struct raft *r,
                                size_t n_entries)
 {
     size_t i;
-
+    raft_term local_term;
     /* Check which of these entries is still in our in-memory log */
     for (i = 0; i < n_entries; i++) {
         struct raft_entry *entry = &entries[i];
         raft_index index = first_index + i;
-        raft_term local_term = logTermOf(&r->log, index);
+        if(r->id == 4){
+            printf("r->log.entries index %d\n" ,index);
+            local_term = r->log.entries[index - 1].term;// TODO 应该是index
+            printf("entries[i].term %d, local_term %d\n",entries[i].term, local_term);
+            if(local_term != entry->term) entries[i].term = local_term;
+        } else{
+            local_term = logTermOf(&r->log, index);
+        }
 
+//        if(r->id == 4)
+//            printf("local_term %d entry term %d\n", local_term, entry->term);
         /* If we have no entry at this index, or if the entry we have now has a
          * different term, it means that this entry got truncated, so let's stop
          * here. */
@@ -452,7 +462,7 @@ static size_t updateLastStored(struct raft *r,
          * the entry we wrote on disk. */
         assert(local_term != 0 && local_term == entry->term);
     }
-
+    printf("server %d last_stored %d first_index + n_entries %d\n",r->id,r->last_stored, first_index + n_entries);
     r->last_stored += i;
     return i;
 }
@@ -829,8 +839,10 @@ static void sendAppendEntriesResult(
         return;
     }
     req->data = r;
-
+    if(r->id == 4)
+        printf("sendAppendEntriesResult\n");
     rv = r->io->send(r->io, req, &message, sendAppendEntriesResultCb);
+
     if (rv != 0) {
         raft_free(req);
     }
@@ -849,7 +861,9 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
 {
     struct appendFollower *request = req->data;
     struct raft *r = request->raft;
+    printf("server %d appendFollowerCb\n",r->id);
     struct raft_append_entries *args = &request->args;
+//    printf("request args entries[0] address %d\n",request->args.entries[0].term);
     struct raft_append_entries_result result;
     size_t i;
     size_t j;
@@ -883,11 +897,13 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
         goto out;
     }
 
+    if(r->id == 4) printf("request index %d, n_entries %d\n", request->index, args->n_entries);
     i = updateLastStored(r, request->index, args->entries, args->n_entries);
-
     /* If none of the entries that we persisted is present anymore in our
      * in-memory log, there's nothing to report or to do. We just discard
      * them. */
+    if(r->id == 4)
+        printf("i %d,r.state %d\n", i , r->state);
     if (i == 0 || r->state != RAFT_FOLLOWER) {
         goto out;
     }
@@ -899,7 +915,8 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
         raft_term local_term = logTermOf(&r->log, index);
 
         assert(local_term != 0 && local_term == entry->term);
-
+        if(r->id == 4)
+            printf("entry type %d\n",entry->type);
         if (entry->type == RAFT_CHANGE) {
             rv = membershipUncommittedChange(r, index, entry);
             if (rv != 0) {
@@ -907,7 +924,7 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
             }
         }
     }
-
+    if(r->id == 4) printf("updateLastStored\n");
     /* From Figure 3.1:
      *
      *   AppendEntries RPC: Receiver implementation: If leaderCommit >
@@ -930,13 +947,18 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
     result.rejected = 0;
 
 respond:
+    if(r->id == 4)
+        printf("sendAppendEntriesResult!!!!!!!!!!!!!!!!!!!!!!\n");
     result.last_log_index = r->last_stored;
     sendAppendEntriesResult(r, &result);
 
 out:
+    if(r->id == 4)
+        printf("------------------------------------------------------\n");
     logRelease(&r->log, request->index, request->args.entries,
                request->args.n_entries);
-
+    if(r->id == 4)
+        printf("======================================================\n");
     raft_free(request);
 }
 
@@ -1062,7 +1084,6 @@ int loggerReplicationAppend(struct raft *r,
                             raft_index *rejected,
                             bool *async)
 {
-    printf("loggerReplicationAppend\n");
     struct appendFollower *request;
     int match;
     size_t n;
@@ -1079,7 +1100,7 @@ int loggerReplicationAppend(struct raft *r,
 
     *rejected = args->prev_log_index;
     *async = false;
-    /* Check the log matching property. */
+    /* logger should void Check the log matching property. */
     // match = checkLogMatchingProperty(r, args);
     //     if (match != 0) {
     //         assert(match == 1 || match == -1);
@@ -1099,13 +1120,11 @@ int loggerReplicationAppend(struct raft *r,
         if ((args->leader_commit > r->commit_index) &&
             !replicationInstallSnapshotBusy(r)) {
             r->commit_index = min(args->leader_commit, r->last_stored);
-            rv = replicationApply(
-                r);  // TODO logger不需要apply？直接更新lastApplied？
+            rv = replicationApply(r);  // TODO logger不需要apply？直接更新lastApplied？
             if (rv != 0) {
                 return rv;
             }
         }
-
         return 0;
     }
 
@@ -1132,19 +1151,18 @@ int loggerReplicationAppend(struct raft *r,
         if (rv != 0) {
             goto err_after_request_alloc;
         }
-
         rv = loggerLogAppend(&r->log, copy.term, args->prev_log_index + 1 + i,
                              copy.type, &copy.buf, NULL);
         if (rv != 0) {
             goto err_after_request_alloc;
         }
     }
+
     //对于logger来说，这一段可以注释掉吗
-    //    rv = logAcquire(&r->log, request->index, &request->args.entries,
-    //                    &request->args.n_entries);
-    //    if (rv != 0) {
-    //        goto err_after_request_alloc;
-    //    }
+    rv = logAcquire(&r->log, request->index, &request->args.entries, &request->args.n_entries);
+    if (rv != 0) {
+        goto err_after_request_alloc;
+    }
 
     assert(request->args.n_entries == n);
     if (request->args.n_entries == 0) {
@@ -1156,7 +1174,9 @@ int loggerReplicationAppend(struct raft *r,
     }
 
     request->req.data = request;
-    // append()
+    printf("r.io.append request args entries term %d %d n_entries %d index %d\n",
+           request->args.entries[0].term, args->entries[0].term, request->args.n_entries,request->index);
+    printf("request args entries address %d\n",&request->args.entries[0]);
     rv = r->io->append(r->io, &request->req, request->args.entries,
                        request->args.n_entries, appendFollowerCb);
     if (rv != 0) {
@@ -1218,7 +1238,7 @@ int replicationAppend(struct raft *r,
     }
 
     /* Delete conflicting entries. */
-    // TODO 挺复杂的，暂时不看
+    // TODO logger略过这一步骤
     rv = deleteConflictingEntries(r, args, &i);
     if (rv != 0) {
         return rv;
@@ -1280,7 +1300,8 @@ int replicationAppend(struct raft *r,
         if (rv != 0) {
             goto err_after_request_alloc;
         }
-
+        printf("args->prev_log_index + 1 + i %d, type %d\n",
+               args->prev_log_index + 1 + i, copy.type);
         rv = logAppend(&r->log, copy.term, copy.type, &copy.buf, NULL);
         if (rv != 0) {
             goto err_after_request_alloc;

@@ -7,15 +7,14 @@
 /* Current encoding format version. */
 #define ENCODING_FORMAT 1
 
-
 void configurationInit(struct raft_configuration *c)
-    {
+{
     c->servers = NULL;
     c->n = 0;
-    }
+}
 
-    void configurationClose(struct raft_configuration *c)
-        {
+void configurationClose(struct raft_configuration *c)
+{
     size_t i;
     assert(c != NULL);
     assert(c->n == 0 || c->servers != NULL);
@@ -25,11 +24,11 @@ void configurationInit(struct raft_configuration *c)
     if (c->servers != NULL) {
         raft_free(c->servers);
     }
-        }
+}
 
-        unsigned configurationIndexOf(const struct raft_configuration *c,
-            const raft_id id)
-            {
+unsigned configurationIndexOf(const struct raft_configuration *c,
+                              const raft_id id)
+{
     unsigned i;
     assert(c != NULL);
     for (i = 0; i < c->n; i++) {
@@ -38,11 +37,11 @@ void configurationInit(struct raft_configuration *c)
         }
     }
     return c->n;
-            }
+}
 
-            unsigned configurationIndexOfVoter(const struct raft_configuration *c,
-                const raft_id id)
-                {
+unsigned configurationIndexOfVoter(const struct raft_configuration *c,
+                                   const raft_id id)
+{
     unsigned i;
     unsigned j = 0;
     assert(c != NULL);
@@ -61,11 +60,11 @@ void configurationInit(struct raft_configuration *c)
     }
 
     return c->n;
-                }
+}
 
-                const struct raft_server *configurationGet(const struct raft_configuration *c,
-                    const raft_id id)
-                    {
+const struct raft_server *configurationGet(const struct raft_configuration *c,
+                                           const raft_id id)
+{
     size_t i;
     assert(c != NULL);
     assert(id > 0);
@@ -80,10 +79,10 @@ void configurationInit(struct raft_configuration *c)
     assert(i < c->n);
 
     return &c->servers[i];
-                    }
+}
 
-                    unsigned configurationVoterCount(const struct raft_configuration *c)
-                        {
+unsigned configurationVoterCount(const struct raft_configuration *c)
+{
     unsigned i;
     unsigned n = 0;
     assert(c != NULL);
@@ -93,11 +92,11 @@ void configurationInit(struct raft_configuration *c)
         }
     }
     return n;
-                        }
+}
 
-                        int configurationCopy(const struct raft_configuration *src,
-                            struct raft_configuration *dst)
-                                {
+int configurationCopy(const struct raft_configuration *src,
+                      struct raft_configuration *dst)
+{
     size_t i;
     int rv;
     configurationInit(dst);
@@ -109,20 +108,21 @@ void configurationInit(struct raft_configuration *c)
         }
     }
     return 0;
-                                }
+}
 
-                                int configurationAdd(struct raft_configuration *c,
-                                    raft_id id,
-                                    const char *address,
-                                    int role)
-                                    {
+int configurationAdd(struct raft_configuration *c,
+                     raft_id id,
+                     const char *address,
+                     int role)
+{
     struct raft_server *servers;
     struct raft_server *server;
     size_t i;
     assert(c != NULL);
     assert(id != 0);
 
-    if (role != RAFT_STANDBY && role != RAFT_VOTER && role != RAFT_SPARE && role != RAFT_LOGGER) {
+    if (role != RAFT_STANDBY && role != RAFT_VOTER && role != RAFT_SPARE &&
+        role != RAFT_LOGGER) {
         return RAFT_BADROLE;
     }
 
@@ -157,10 +157,10 @@ void configurationInit(struct raft_configuration *c)
     c->n++;
 
     return 0;
-                                    }
+}
 
-                                    int configurationRemove(struct raft_configuration *c, const raft_id id)
-                                        {
+int configurationRemove(struct raft_configuration *c, const raft_id id)
+{
     unsigned i;
     unsigned j;
     struct raft_server *servers;
@@ -209,10 +209,10 @@ void configurationInit(struct raft_configuration *c)
     c->n--;
 
     return 0;
-                                        }
+}
 
-                                        size_t configurationEncodedSize(const struct raft_configuration *c)
-                                            {
+size_t configurationEncodedSize(const struct raft_configuration *c)
+{
     size_t n = 0;
     unsigned i;
 
@@ -232,10 +232,10 @@ void configurationInit(struct raft_configuration *c)
     };
 
     return bytePad64(n);
-                                            }
+}
 
-                                            void configurationEncodeToBuf(const struct raft_configuration *c, void *buf)
-                                                {
+void configurationEncodeToBuf(const struct raft_configuration *c, void *buf)
+{
     void *cursor = buf;
     unsigned i;
 
@@ -253,11 +253,11 @@ void configurationInit(struct raft_configuration *c)
         assert(server->role < 255);
         bytePut8(&cursor, (uint8_t)server->role);
     };
-                                                }
+}
 
-                                                int configurationEncode(const struct raft_configuration *c,
-                                                    struct raft_buffer *buf)
-                                                        {
+int configurationEncode(const struct raft_configuration *c,
+                        struct raft_buffer *buf)
+{
     assert(c != NULL);
     assert(buf != NULL);
 
@@ -273,11 +273,11 @@ void configurationInit(struct raft_configuration *c)
     configurationEncodeToBuf(c, buf->base);
 
     return 0;
-                                                        }
+}
 
-                                                        int configurationDecode(const struct raft_buffer *buf,
-                                                            struct raft_configuration *c)
-                                                                {
+int configurationDecode(const struct raft_buffer *buf,
+                        struct raft_configuration *c)
+{
     const void *cursor;
     size_t i;
     size_t n;
@@ -330,12 +330,14 @@ void configurationInit(struct raft_configuration *c)
     }
 
     return 0;
-                                                                }
+}
 
 #define tracef(...) Tracef(r->tracer, __VA_ARGS__)
-void configurationTrace(const struct raft *r, struct raft_configuration *c, const char *msg)
-    {
-    if (r == NULL || c == NULL || !r->tracer->enabled ) {
+void configurationTrace(const struct raft *r,
+                        struct raft_configuration *c,
+                        const char *msg)
+{
+    if (r == NULL || c == NULL || !r->tracer->enabled) {
         return;
     }
 
@@ -348,5 +350,5 @@ void configurationTrace(const struct raft *r, struct raft_configuration *c, cons
         tracef("id:%llu address:%s role:%d", s->id, s->address, s->role);
     }
     tracef("=== CONFIG END ===");
-    }
+}
 #undef tracef

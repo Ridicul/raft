@@ -64,7 +64,8 @@ int progressBuildArray(struct raft *r)
 }
 
 int progressRebuildArray(struct raft *r,
-                         const struct raft_configuration *configuration)
+                         const struct raft_configuration *configuration,
+                         raft_index index)
 {
     printf("progressRebuildArray\n");
     raft_index last_index = logLastIndex(&r->log);

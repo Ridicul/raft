@@ -234,10 +234,10 @@ static void uvClientSendPending(struct uvClient *c)
 {
     int rv;
     assert(c->stream != NULL);
-    tracef("send pending messages");
     while (!QUEUE_IS_EMPTY(&c->pending)) {
         queue *head;
         struct uvSend *send;
+
         head = QUEUE_HEAD(&c->pending);
         send = QUEUE_DATA(head, struct uvSend, queue);
         QUEUE_REMOVE(head);
@@ -345,10 +345,11 @@ static void uvClientConnect(struct uvClient *c)
     assert(c->old_stream == NULL);
     assert(!uv_is_active((struct uv_handle_s *)&c->timer));
     assert(c->connect.data == NULL);
-
     c->n_connect_attempt++;
 
     c->connect.data = c;
+    printf("uvClientConnect11111111111111\n");
+
     rv = c->uv->transport->connect(c->uv->transport, &c->connect, c->id,
                                    c->address, uvClientConnectCb);
     if (rv != 0) {
@@ -425,7 +426,6 @@ static int uvGetClient(struct uv *uv,
 
         return 0;
     }
-
     /* Initialize the new connection */
     *client = RaftHeapMalloc(sizeof **client);
     if (*client == NULL) {
@@ -437,9 +437,12 @@ static int uvGetClient(struct uv *uv,
     if (rv != 0) {
         goto err_after_client_alloc;
     }
+    printf("uvGetClient call++++++++++++++++++++++++++++++++++++\n");
 
+    printf("client info address %s, id %d\n", (*client)->address, (*client)->id);
     /* Make a first connection attempt right away.. */
     uvClientConnect(*client);
+    printf("uvGetClient call 4444\n");
 
     return 0;
 
@@ -479,11 +482,11 @@ int UvSend(struct raft_io *io,
         send->bufs = NULL;
         goto err_after_send_alloc;
     }
-
     /* Get a client object connected to the target server, creating it if it
      * doesn't exist yet. */
     //获取连接到目标服务器的客户端对象，如果它不存在则创建它。
     rv = uvGetClient(uv, message->server_id, message->server_address, &client);
+    //TODO 这里出现了问题？
     if (rv != 0) {
         printf("server %d uvGetClient error\n", message->server_id);
         goto err_after_send_alloc;

@@ -134,7 +134,8 @@ static int clientChangeConfiguration(
 
     if (configuration->n != r->configuration.n) {
         // progressRebuildArray只有configuration.n改变才会调用。
-        rv = progressRebuildArray(r, configuration);
+        //TODO 这里会调用initProgress
+        rv = progressRebuildArray(r, configuration,index);
         if (rv != 0) {
             goto err;
         }
@@ -327,7 +328,6 @@ int raft_assign(struct raft *r,
         rv = clientChangeConfiguration(r, req, &r->configuration);
         printf("server %d oldRole %d new role %d\n", id, old_role, role);
         if (rv != 0) {
-            printf("clientChangeConfiguration failed %d\n", rv);
             r->configuration.servers[server_index].role = old_role;
             return rv;
         }

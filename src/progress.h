@@ -25,7 +25,8 @@ int progressBuildArray(struct raft *r);
  * Progress information for servers existing only in the new configuration will
  * be initialized as in progressBuildArray().*/
 int progressRebuildArray(struct raft *r,
-    const struct raft_configuration *configuration);
+    const struct raft_configuration *configuration,
+                         raft_index index);
 
 /* Whether the log of the i'th server in the configuration up-to-date with
  * ours. */

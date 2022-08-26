@@ -32,6 +32,7 @@ static void uvWriterReqSetStatus(struct UvWriterReq *req, int result)
  * callback if set. */
 static void uvWriterReqFinish(struct UvWriterReq *req)
 {
+    printf("uvWriterReqFinish\n");
     QUEUE_REMOVE(&req->queue);
     if (req->status != 0) {
         uvWriterReqTransferErrMsg(req);

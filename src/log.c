@@ -296,11 +296,13 @@ static bool refsDecr(struct raft_log *l,
     assert(index > 0);
 
     key = refsKey(index, l->refs_size);
+//    printf("refsDecr refsKey\n");
     prev_slot = NULL;
 
     /* Lookup the slot associated with the given term/index, keeping track of
      * its previous slot in the bucket list. */
     slot = &l->refs[key];
+//    printf("refs key %d\n", key);
     while (1) {
         assert(slot != NULL);
         assert(slot->index == index);
@@ -489,17 +491,16 @@ int loggerLogAppend(struct raft_log *l,
     // TODO 需要知道log 的个参数在初始化时、接收参数时、打完快照之后的值和变化。
     // step 1、ensureCapacity(l)
 
-    printf("最初的logger log的一些参数 size %d, back %d, front %d\n", l->size,
-           l->back, l->front);
     size_t n;    /* Current number of entries */
     size_t size; /* Size of the new array */
     size_t i;
     n = logNumEntries(l);
+    printf("loggerLogAppend index %d type %d\n", index, type);
     if (l->size == 2 && l->back == 1) {  // TODO 说明这是第一个加入logger的entry
 
         size = l->size;
 
-        while (index + 1 > size) {
+        while (index > size) {
             size = (size + 1) * 2;
         }
 
@@ -518,18 +519,25 @@ int loggerLogAppend(struct raft_log *l,
         l->entries = entries;
         l->size = size;
         l->front = 0;
-        l->back = index;
+        l->back = index - 1;//TODO 这里需要修改
+    }else{
+        //TODO ensureCapacity？
     }
     rv = refsInit(l, term, index);
     if (rv != 0) {
         return rv;
     }
-
+    printf("l->back %d\n",l->back);
     entry = &l->entries[l->back];
+
     entry->term = term;
     entry->type = type;
     entry->buf = *buf;
     entry->batch = batch;
+//    printf("l->entries[i].term %d term %d\n",
+//           l->entries[l->back].term, term);
+//    printf("index log term %d\n",
+//           logTermOf(l,l->back));
 
     l->back += 1;
     l->back = l->back % l->size;
@@ -565,6 +573,7 @@ int logAppend(struct raft_log *l,
     }
 
     entry = &l->entries[l->back];
+    printf("index %d,back %d\n",index,l->back);
     entry->term = term;
     entry->type = type;
     entry->buf = *buf;
@@ -683,7 +692,6 @@ raft_term logTermOf(struct raft_log *l, const raft_index index)
         index > logLastIndex(l)) {
         return 0;
     }
-
     if (index == l->snapshot.last_index) {
         assert(l->snapshot.last_term != 0);
         /* Coherence check that if we still have the entry at last_index, its
@@ -694,7 +702,6 @@ raft_term logTermOf(struct raft_log *l, const raft_index index)
         }
         return l->snapshot.last_term;
     }
-
     i = locateEntry(l, index);
     assert(i < l->size);
     return l->entries[i].term;
@@ -728,7 +735,8 @@ const struct raft_entry *logGet(struct raft_log *l, const raft_index index)
 
     return &l->entries[i];
 }
-// TODO 待理解作用
+// TODO logAcquire
+//
 int logAcquire(struct raft_log *l,
                const raft_index index,
                struct raft_entry *entries[],
@@ -810,15 +818,17 @@ void logRelease(struct raft_log *l,
     assert((entries == NULL && n == 0) || (entries != NULL && n > 0));
 
     for (i = 0; i < n; i++) {
+//        printf("logRelease unsigned %d\n",n);
         struct raft_entry *entry = &entries[i];
         bool unref;
 
         unref = refsDecr(l, entry->term, index + i);
-
+//        printf("refsDecr done \n");
         /* If there are no outstanding references to this entry, free its
          * payload if it's not part of a batch, or check if we can free the
          * batch itself. */
         if (unref) {
+//            printf("refsDecr done \n");
             if (entries[i].batch == NULL) {
                 if (entry->buf.base != NULL) {
                     raft_free(entries[i].buf.base);
@@ -827,7 +837,9 @@ void logRelease(struct raft_log *l,
                 if (entry->batch != batch) {
                     if (!isBatchReferenced(l, entry->batch)) {
                         batch = entry->batch;
+                        printf("entries.batch != NULL\n");
                         raft_free(batch);
+                        printf("entries.batch != NULL\n");
                     }
                 }
             }

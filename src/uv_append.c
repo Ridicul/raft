@@ -107,6 +107,8 @@ static void uvAppendFinishRequestsInQueue(struct uv *uv, queue *q, int status)
         queue *head;
         head = QUEUE_HEAD(q);
         append = QUEUE_DATA(head, struct uvAppend, queue);
+        printf("append entries address %d\n",&append->entries[0].term);
+
         /* Rollback the append next index if the result was unsuccessful. */
         if (status != 0) {
             uv->append_next_index -= append->n;
@@ -122,6 +124,7 @@ static void uvAppendFinishRequestsInQueue(struct uv *uv, queue *q, int status)
         QUEUE_REMOVE(head);
         req = append->req;
         RaftHeapFree(append);
+        printf("appendFollowerCb call\n");
         req->cb(req, status);
     }
 }
@@ -130,6 +133,7 @@ static void uvAppendFinishRequestsInQueue(struct uv *uv, queue *q, int status)
  * the given status. */
 static void uvAppendFinishWritingRequests(struct uv *uv, int status)
 {
+    printf("uvAppendFinishWritingRequests\n");
     uvAppendFinishRequestsInQueue(uv, &uv->append_writing_reqs, status);
 }
 
@@ -137,6 +141,7 @@ static void uvAppendFinishWritingRequests(struct uv *uv, int status)
  * the given status. */
 static void uvAppendFinishPendingRequests(struct uv *uv, int status)
 {
+    printf("uvAppendFinishPendingRequests\n");
     uvAppendFinishRequestsInQueue(uv, &uv->append_pending_reqs, status);
 }
 
@@ -183,6 +188,7 @@ static int uvAliveSegmentEncodeEntriesToWriteBuf(struct uvAliveSegment *segment,
 static int uvAppendMaybeStart(struct uv *uv);
 static void uvAliveSegmentWriteCb(struct UvWriterReq *write, const int status)
 {
+    printf("uvAliveSegmentWriteCb\n");
     struct uvAliveSegment *s = write->data;
     struct uv *uv = s->uv;
     unsigned n_blocks;
@@ -287,6 +293,7 @@ out:
  * of the given segment. */
 static int uvAliveSegmentWrite(struct uvAliveSegment *s)
 {
+    printf("uvAliveSegmentWrite\n");
     int rv;
     assert(s->counter != 0);
     assert(s->pending.n > 0);
@@ -307,6 +314,7 @@ static int uvAliveSegmentWrite(struct uvAliveSegment *s)
  * segment. */
 static int uvAppendMaybeStart(struct uv *uv)
 {
+    printf("uvAppendMaybeStart\n");
     struct uvAliveSegment *segment;
     struct uvAppend *append;
     unsigned n_reqs;
@@ -352,6 +360,7 @@ start:
     while (!QUEUE_IS_EMPTY(&uv->append_pending_reqs)) {
         head = QUEUE_HEAD(&uv->append_pending_reqs);
         append = QUEUE_DATA(head, struct uvAppend, queue);
+        printf("uvAppendMaybeStart append entries term %d\n",append->entries[0].term);
         assert(append->segment != NULL);
         if (append->segment != segment) {
             break; /* Not targeted to this segment */
@@ -614,6 +623,7 @@ static int uvAppendEnqueueRequest(struct uv *uv, struct uvAppend *append)
     uvAliveSegmentReserveSegmentCapacity(segment, size);
 
     append->segment = segment;
+    printf("append->queue entries term %d\n", append->entries[0].term);
     QUEUE_PUSH(&uv->append_pending_reqs, &append->queue);
     uv->append_next_index += append->n;
 
@@ -630,8 +640,6 @@ int UvAppend(struct raft_io *io,
              unsigned n,
              raft_io_append_cb cb)
 {
-    printf("UvAppend currentThread: %5u\n", syscall(SYS_gettid));
-
     struct uv *uv;
     struct uvAppend *append;
     int rv;

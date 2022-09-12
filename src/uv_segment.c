@@ -52,7 +52,7 @@ match:
     info->filename[n] = '\0';
     return true;
 }
-
+//如果给定的文件名与封闭段 (xxx-yyy) 或开放段 (open-xxx) 之一匹配，则将新项目附加到给定段信息列表。
 int uvSegmentInfoAppendIfMatch(const char *filename,
                                struct uvSegmentInfo *infos[],
                                size_t *n_infos,
@@ -123,6 +123,7 @@ int uvSegmentKeepTrailing(struct uv *uv,
                           size_t trailing,
                           char *errmsg)
 {
+    printf("uvSegmentKeepTrailing\n");
     raft_index retain_index;
     size_t i;
     int rv;
@@ -182,6 +183,7 @@ static int uvReadSegmentFile(struct uv *uv,
 /* Consume the content buffer, returning a pointer to the current position and
  * advancing the offset of n bytes. Return an error if not enough bytes are
  * available. */
+//主要是把data写到content里面，这个offset是谁的？
 static int uvConsumeContent(const struct raft_buffer *content,
                             size_t *offset,
                             size_t n,
@@ -357,7 +359,7 @@ static int extendEntries(const struct raft_entry *entries1,
 
     return 0;
 }
-
+//加载给定封闭段中包含的所有条目。
 int uvSegmentLoadClosed(struct uv *uv,
                         struct uvSegmentInfo *info,
                         struct raft_entry *entries[],
@@ -407,7 +409,8 @@ int uvSegmentLoadClosed(struct uv *uv,
 
     last = false;
     offset = sizeof format;
-    for (i = 1; !last; i++) {
+    //uvLoadEntriesBatch，extentEntries都是静态方法，
+    for (i = 1; !last; i++) {//last是看是不是最后一个？
         rv = uvLoadEntriesBatch(uv, &buf, &tmp_entries, &tmp_n, &offset, &last);
         if (rv != 0) {
             ErrMsgWrapf(uv->io->errmsg, "entries batch %u starting at byte %zu",
@@ -421,7 +424,7 @@ int uvSegmentLoadClosed(struct uv *uv,
         raft_free(tmp_entries);
     }
 
-    if (*n != expected_n) {
+    if (*n != expected_n) {//如果读取的entry数量与预期不符合，那么就说明出现了问题，重试
         ErrMsgPrintf(uv->io->errmsg, "found %zu entries (expected %u)", *n,
                      expected_n);
         rv = RAFT_CORRUPT;
@@ -453,6 +456,7 @@ err:
 
 /* Check if the content of the segment file contains all zeros from the current
  * offset onward. */
+//检查段文件的内容是否包含从当前偏移量开始的所有零。当前offset后到len后面是不是都是空的？都可以发个东西？
 static bool uvContentHasOnlyTrailingZeros(const struct raft_buffer *buf,
                                           size_t offset)
 {
@@ -468,6 +472,7 @@ static bool uvContentHasOnlyTrailingZeros(const struct raft_buffer *buf,
 }
 
 /* Load all entries contained in an open segment. */
+//暂时不知道干嘛用的
 static int uvSegmentLoadOpen(struct uv *uv,
                              struct uvSegmentInfo *info,
                              struct raft_entry *entries[],
@@ -641,6 +646,7 @@ err:
 
 /* Ensure that the write buffer of the given segment is large enough to hold the
  * the given number of bytes size. */
+//确保给定段的写入缓冲区足够大以容纳给定的字节数大小。
 static int uvEnsureSegmentBufferIsLargeEnough(struct uvSegmentBuffer *b,
                                               size_t size)
 {
@@ -692,7 +698,7 @@ void uvSegmentBufferClose(struct uvSegmentBuffer *b)
         raft_aligned_free(b->block_size, b->arena.base);
     }
 }
-
+//在缓冲区的最开始对格式版本进行编码。当缓冲区为空时，必须调用此函数。
 int uvSegmentBufferFormat(struct uvSegmentBuffer *b)
 {
     int rv;
@@ -864,7 +870,7 @@ static void uvRecoverFromCorruptSegment(struct uv *uv,
         }
     }
 }
-
+//TODO is_opened调用uvSegmentLoadOpen和uvSegmentLoadClosed
 int uvSegmentLoadAll(struct uv *uv,
                      const raft_index start_index,
                      struct uvSegmentInfo *infos,
@@ -1011,8 +1017,10 @@ static int uvWriteClosedSegment(struct uv *uv,
 
     data.base = buf.arena.base;
     data.len = buf.n;
+
     rv = UvFsMakeFile(uv->dir, filename, &data, 1, errmsg);
     uvSegmentBufferClose(&buf);
+
     if (rv != 0) {
         tracef("write segment %s: %s", filename, errmsg);
         return RAFT_IOERR;
@@ -1026,7 +1034,7 @@ int uvSegmentCreateFirstClosed(struct uv *uv,
 {
     return uvSegmentCreateClosedWithConfiguration(uv, 1, configuration);
 }
-
+//编写一个封闭段，在给定配置的给定索引处仅包含一个条目。firstClosed的index是1，其他地方在UvRecover
 int uvSegmentCreateClosedWithConfiguration(
     struct uv *uv,
     raft_index index,
@@ -1038,7 +1046,7 @@ int uvSegmentCreateClosedWithConfiguration(
 
     /* Render the path */
     sprintf(filename, UV__CLOSED_TEMPLATE, index, index);
-
+    printf("uvSegmentCreateClosedWithConfiguration filename %s\n",filename);
     /* Encode the given configuration. */
     rv = configurationEncode(configuration, &buf);
     if (rv != 0) {
@@ -1066,7 +1074,7 @@ err:
     assert(rv != 0);
     return rv;
 }
-
+//截断已经关闭的段。
 int uvSegmentTruncate(struct uv *uv,
                       struct uvSegmentInfo *segment,
                       raft_index index)

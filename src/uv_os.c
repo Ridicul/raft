@@ -19,7 +19,7 @@
 
 /* Default permissions when creating a directory. */
 #define DEFAULT_DIR_PERM 0700
-
+//打开path下的文件，返回的地址给fd文件描述符
 int UvOsOpen(const char *path, int flags, int mode, uv_file *fd)
 {
     struct uv_fs_s req;
@@ -95,6 +95,7 @@ int UvOsFallocate(uv_file fd, off_t offset, off_t len)
 int UvOsTruncate(uv_file fd, off_t offset)
 {
     struct uv_fs_s req;
+    //TODO offest参数是拿来干嘛的？
     return uv_fs_ftruncate(NULL, &req, fd, offset, NULL);
 }
 
@@ -136,13 +137,14 @@ int UvOsUnlink(const char *path)
     struct uv_fs_s req;
     return uv_fs_unlink(NULL, &req, path, NULL);
 }
-
+//重命名
 int UvOsRename(const char *path1, const char *path2)
 {
+    printf("UvOsRename path1 %s to path2 %s\n", path1, path2);
     struct uv_fs_s req;
     return uv_fs_rename(NULL, &req, path1, path2, NULL);
 }
-
+//拼接路径
 int UvOsJoin(const char *dir, const char *filename, char *path)
 {
     if (!UV__DIR_HAS_VALID_LEN(dir) || !UV__FILENAME_HAS_VALID_LEN(filename)) {

@@ -76,6 +76,7 @@ static int uvMaintenance(const char *dir, char *errmsg)
 }
 
 /* Implementation of raft_io->config. */
+//TODO 这个需要进行加载
 static int uvInit(struct raft_io *io, raft_id id, const char *address)
 {
     struct uv *uv;
@@ -147,12 +148,10 @@ static int uvStart(struct raft_io *io,
     uv->tick_cb = tick_cb;
     uv->recv_cb = recv_cb;
     rv = UvRecvStart(uv);
-    printf("UvRecvStart %d\n", rv);
     if (rv != 0) {
         return rv;
     }
     rv = uv_timer_start(&uv->timer, uvTickTimerCb, msecs, msecs);
-    printf("uv_timer_start %d\n", rv);
     assert(rv == 0);
     return 0;
 }
@@ -259,6 +258,10 @@ static int uvFilterSegments(struct uv *uv,
     }
 
     /* Find the index of the most recent closed segment. */
+    /* segments里索引为0的segment的end_index最大吗？ */
+    /* segments数组，从小0到大n-1，先是open的全部在后，closed在前；对于closed来说，end_index越大，越在后面
+     * 所以下面的方式，获得j是end_index最大的closed_segment
+     * */
     for (j = 0; j < *n; j++) {
         segment = &(*segments)[j];
         if (segment->is_open) {
@@ -277,14 +280,15 @@ static int uvFilterSegments(struct uv *uv,
      * case we keep everything hoping that they contain all the entries since
      * the last closed segment (TODO: we should encode the starting entry in the
      * open segment). */
-    if (segment->end_index < last_index) {
-        if (!(*segments)[*n - 1].is_open) {
+    if (segment->end_index < last_index) {//表明最后一个snapshot的last_index是大于last_closed_segment_end_index的
+        if (!(*segments)[*n - 1].is_open) {//而且如果segment数组中没有open_segment，即全是closed_segment，那么就释放整个segments数组？TODO 为什么要释放呢？只是重启集群需要释放，还是正常运行都需要释放呢？
             tracef(
                 "discarding all closed segments, since most recent is behind "
                 "last snapshot");
             raft_free(*segments);
             *segments = NULL;
             *n = 0;
+            //释放之后（全是closed，且都包含在snapshot中！）立即返回
             return 0;
         }
         tracef(
@@ -292,9 +296,15 @@ static int uvFilterSegments(struct uv *uv,
             "yet there are open segments",
             segment->filename);
     }
+    /* 会走到这里的情况
+     * 1、最后一个closed_segment的end_index>=last_snapshot_last_index
+     * 2、前面情况的相反，还有open_segment
+     * TODO 这两个情况正常的吗？
+     * */
 
     /* Now scan the segments backwards, searching for the longest list of
-     * contiguous closed segments. */
+     * contiguous closed segments.
+     * 从最后的closed_segment开始往前，看那个segment是缺失的*/
     if (j >= 1) {
         for (i = j; i > 0; i--) {
             struct uvSegmentInfo *newer;
@@ -314,14 +324,14 @@ static int uvFilterSegments(struct uv *uv,
      * greater than the snapshot's last index plus one (so there are no
      * missing entries). */
     segment = &(*segments)[i];
-    if (segment->first_index > last_index + 1) {
+    if (segment->first_index > last_index + 1) {//如果满足这个条件说明，segment里面有缺失的entry
         ErrMsgPrintf(uv->io->errmsg,
                      "closed segment %s is past last snapshot %s",
                      segment->filename, snapshot_filename);
         return RAFT_CORRUPT;
     }
 
-    if (i != 0) {
+    if (i != 0) {//说明确实有closed_segment[i]确实缺失了entry，但是snapshot里面有，可以从中恢复！
         size_t new_n = *n - i;
         struct uvSegmentInfo *new_segments;
         new_segments = raft_malloc(new_n * sizeof *new_segments);
@@ -332,6 +342,7 @@ static int uvFilterSegments(struct uv *uv,
         raft_free(*segments);
         *segments = new_segments;
         *n = new_n;
+        //TODO 这只是内存初始化？缺失的segment那里去赋值呢？
     }
 
     return 0;
@@ -373,6 +384,7 @@ static int uvLoadSnapshotAndEntries(struct uv *uv,
             rv = RAFT_NOMEM;
             goto err;
         }
+        //加载最后一个snapshot，即snapshot[n_snapshots - 1]，读取配置并包装成raft_snapshot
         rv = UvSnapshotLoad(uv, &snapshots[n_snapshots - 1], *snapshot,
                             uv->io->errmsg);
         if (rv != 0) {
@@ -380,8 +392,10 @@ static int uvLoadSnapshotAndEntries(struct uv *uv,
             *snapshot = NULL;
             goto err;
         }
+        //包装snapshot_filename
         uvSnapshotFilenameOf(&snapshots[n_snapshots - 1], snapshot_filename);
         tracef("most recent snapshot at %lld", (*snapshot)->index);
+        //这里为什么要释放置NULL？
         RaftHeapFree(snapshots);
         snapshots = NULL;
 
@@ -389,23 +403,26 @@ static int uvLoadSnapshotAndEntries(struct uv *uv,
          * make sure that the first index of the first closed segment is not
          * greater than the snapshot's last index plus one (so there are no
          * missing entries), and update the start index accordingly. */
+        /* 过滤给定的段列表以查找与给定快照最后一个索引重叠的最近连续的封闭段块。 */
+        //snapshot的index是起点还是终点？
         rv = uvFilterSegments(uv, (*snapshot)->index, snapshot_filename,
                               &segments, &n_segments);
         if (rv != 0) {
             goto err;
         }
         if (segments != NULL) {
-            if (segments[0].is_open) {
-                *start_index = (*snapshot)->index + 1;
+            if (segments[0].is_open) {//没有closed_segment？
+                *start_index = (*snapshot)->index + 1;//start_index为last_snapshot_last_index + 1
             } else {
-                *start_index = segments[0].first_index;
+                *start_index = segments[0].first_index;//那就是segment[0].first_index
             }
         } else {
             *start_index = (*snapshot)->index + 1;
         }
     }
 
-    /* Read data from segments, closing any open segments. */
+    /* Read data from segments, closing any open segments.
+     * 启动时只有closed_segment*/
     if (segments != NULL) {
         raft_index last_index;
         rv = uvSegmentLoadAll(uv, *start_index, segments, n_segments, entries,
@@ -503,6 +520,7 @@ static int uvSetTerm(struct raft_io *io, const raft_term term)
     int rv;
     uv = io->impl;
     uv->metadata.version++;
+    printf("metadata.version %d\n",uv->metadata.version);
     uv->metadata.term = term;
     uv->metadata.voted_for = 0;
     rv = uvMetadataStore(uv, &uv->metadata);
@@ -519,6 +537,7 @@ static int uvSetVote(struct raft_io *io, const raft_id server_id)
     int rv;
     uv = io->impl;
     uv->metadata.version++;
+    printf("setVote metadata.version %d\n",uv->metadata.version);
     uv->metadata.voted_for = server_id;
     rv = uvMetadataStore(uv, &uv->metadata);
     if (rv != 0) {

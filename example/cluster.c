@@ -85,6 +85,7 @@ int main(int argc, char *argv[])
     timespec_get(&now, TIME_UTC);
     srandom((unsigned)(now.tv_nsec ^ now.tv_sec));
 
+    /* 注释掉了kill和forkServer */
     while (1) {
         struct timespec interval;
         int status;

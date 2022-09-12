@@ -3,25 +3,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cli.h"
 #include "../include/raft.h"
 #include "../include/raft/uv.h"
-#include "../src/configuration.h"
 
-#define N_SERVERS 3         /* Number of servers in the example cluster */
-#define APPLY_RATE 125      /* Apply a new entry every 125 milliseconds */
-#define REPLY_TIMEOUT 5000  //建议 60 seconds 现阶段测试 为 10seconds。
-#define Log(SERVER_ID, FORMAT) printf("%d: " FORMAT "\n", SERVER_ID)
+#define N_SERVERS 3    /* Number of servers in the example cluster */
+#define APPLY_RATE 125 /* Apply a new entry every 125 milliseconds */
+
+#define Log(SERVER_ID, FORMAT) printf("%lld: " FORMAT "\n", SERVER_ID)
 #define Logf(SERVER_ID, FORMAT, ...) \
-    printf("%d: " FORMAT "\n", SERVER_ID, __VA_ARGS__)
+    printf("%lld: " FORMAT "\n", SERVER_ID, __VA_ARGS__) \
 
 /********************************************************************
  *
  * Sample application FSM that just increases a counter.
  *
  ********************************************************************/
-int flag = 1;
-int cnt = 1;
-int removeRaft = -1;
 
 struct Fsm
 {
@@ -56,7 +53,6 @@ static int FsmSnapshot(struct raft_fsm *fsm,
     if ((*bufs)[0].base == NULL) {
         return RAFT_NOMEM;
     }
-    printf("f->count %d\n",f->count);
     *(uint64_t *)(*bufs)[0].base = f->count;
     return 0;
 }
@@ -109,17 +105,18 @@ struct Server
 {
     void *data;                         /* User data context. */
     struct uv_loop_s *loop;             /* UV loop. */
-    struct uv_timer_s timer;            /* To periodically apply a new entry. */
     const char *dir;                    /* Data dir of UV I/O backend. */
     struct raft_uv_transport transport; /* UV I/O backend transport. */
     struct raft_io io;                  /* UV I/O backend. */
     struct raft_fsm fsm;                /* Sample application FSM. */
-    unsigned id;                        /* Raft instance ID. */
+    unsigned long long id;              /* Raft instance ID. */
     char address[64];                   /* Raft instance address. */
     struct raft raft;                   /* Raft instance. */
     struct raft_transfer transfer;      /* Transfer leadership request. */
     ServerCloseCb close_cb;             /* Optional close callback. */
 };
+
+struct Server *server;
 
 static void serverRaftCloseCb(struct raft *raft)
 {
@@ -162,11 +159,11 @@ static void serverTimerCloseCb(struct uv_handle_s *handle)
 static int ServerInit(struct Server *s,
                       struct uv_loop_s *loop,
                       const char *dir,
-                      unsigned id)
+                      unsigned id,
+                      const char *address)
 {
     struct raft_configuration configuration;
     struct timespec now;
-    unsigned i;
     int rv;
 
     memset(s, 0, sizeof *s);
@@ -176,14 +173,6 @@ static int ServerInit(struct Server *s,
     srandom((unsigned)(now.tv_nsec ^ now.tv_sec));
 
     s->loop = loop;
-
-    /* Add a timer to periodically try to propose a new entry. */
-    rv = uv_timer_init(s->loop, &s->timer);
-    if (rv != 0) {
-        Logf(s->id, "uv_timer_init(): %s", uv_strerror(rv));
-        goto err;
-    }
-    s->timer.data = s;
 
     /* Initialize the TCP-based RPC transport. */
     rv = raft_uv_tcp_init(&s->transport, s->loop);
@@ -205,14 +194,11 @@ static int ServerInit(struct Server *s,
         goto err_after_uv_init;
     }
 
-    /* Save the server ID. */
+    /* Save the server ID and address. */
     s->id = id;
-
-    /* Render the address. */
-    sprintf(s->address, "127.0.0.1:900%d", id);
+    strcpy(s->address, address);
 
     /* Initialize and start the engine, using the libuv-based I/O backend. */
-    /* 初始化raft结构体的一些信息，然后调用uvInit 从磁盘中加载metadata赋给uv.metadata，主要是voted_for和currentTerm信息*/
     rv = raft_init(&s->raft, &s->io, &s->fsm, id, s->address);
     if (rv != 0) {
         Logf(s->id, "raft_init(): %s", raft_errmsg(&s->raft));
@@ -222,28 +208,19 @@ static int ServerInit(struct Server *s,
 
     /* Bootstrap the initial configuration if needed. */
     raft_configuration_init(&configuration);
-    for (i = 0; i < N_SERVERS; i++) {
-        char address[64];
-        unsigned server_id = i + 1;
-        sprintf(address, "127.0.0.1:900%d", server_id);
-        rv = raft_configuration_add(&configuration, server_id, address,
-                                    RAFT_VOTER);
-        if (rv != 0) {
-            Logf(s->id, "raft_configuration_add(): %s", raft_strerror(rv));
-            goto err_after_configuration_init;
-        }
+    rv = raft_configuration_add(&configuration, id, address, RAFT_VOTER);
+    if (rv != 0) {
+        Logf(s->id, "raft_configuration_add(): %s", raft_strerror(rv));
+        goto err_after_configuration_init;
     }
-    /* 调用uvBootstrap， setTerm中把uv.metadata赋值并写入磁盘，
-     * uvSegmentCreateFirstClosed创建第一个封闭段，index为1，里面buf只存储了configuration*/
     rv = raft_bootstrap(&s->raft, &configuration);
     if (rv != 0 && rv != RAFT_CANTBOOTSTRAP) {
         goto err_after_configuration_init;
     }
-
     raft_configuration_close(&configuration);
-    /* 设置快照阈值和每次打快照需要保留多少，比如设为20和10，当log中有20个entry时，触发快照，然后将1-10打快照，保留11-20 */
-    raft_set_snapshot_threshold(&s->raft, 20);
-    raft_set_snapshot_trailing(&s->raft, 10);
+
+    raft_set_snapshot_threshold(&s->raft, 64);
+    raft_set_snapshot_trailing(&s->raft, 16);
     raft_set_pre_vote(&s->raft, true);
 
     s->transfer.data = s;
@@ -271,75 +248,34 @@ static void serverApplyCb(struct raft_apply *req, int status, void *result)
     raft_free(req);
     if (status != 0) {
         if (status != RAFT_LEADERSHIPLOST) {
-            Logf(s->id, "raft_apply() callback: %s (%d)", raft_errmsg(&s->raft),
-                 status);
+            cli_printf("%lld: raft_apply() callback: %s (%d)\n", s->id, raft_errmsg(&s->raft), status);
         }
+        cli_cmd_end();
         return;
     }
     count = *(int *)result;
     if (count % 100 == 0) {
-        Logf(s->id, "count %d", count);
+        cli_printf("%lld: count %d\n", s->id, count);
     }
+    cli_cmd_end();
 }
 
-static void raft_change_cb_mock(struct raft_change *req, int status)
+/* Called when received client's apply command. */
+static void serverApply(int argc, char *argv[])
 {
-    printf("raft_change_cb_mock\n");
-    (void)(req);
-    (void)(status);
-}
-/* Called periodically every APPLY_RATE milliseconds. */
-static void serverTimerCb(uv_timer_t *timer)
-{
-    struct Server *s = timer->data;
     struct raft_buffer buf;
     struct raft_apply *req;
     int rv;
-    if (s->raft.state != RAFT_LEADER) {
+
+    if (server->raft.state != RAFT_LEADER) {
         return;
-    }
-    // leader来检测follower上一次reply的时间到现在隔了多久？
-    raft_time now = s->raft.io->time(s->raft.io);
-    //遍历leader的configuration中的所有配置项？三副本的情况下也只有三个
-    for (int i = 0; i < s->raft.configuration.n; i++) {
-        if (s->raft.id == s->raft.configuration.servers[i].id)
-            continue;
-        raft_time last_recv = s->raft.leader_state.progress[i].last_recv_time;
-        if (now - last_recv > REPLY_TIMEOUT && flag == 2) {
-            printf("server %d 断开，调用raft_add_logger\n", s->raft.configuration.servers[i].id);
-            struct raft_change raft_change_req;
-            flag++;
-            char address[64];
-            sprintf(address, "127.0.0.1:900%d", 4);
-            raft_change_req.cb = raft_change_cb_mock;
-            raft_add_logger(&s->raft, &raft_change_req, 4, address,
-                            raft_change_cb_mock);
-        }
-    }
-    // assign voter to spare，用此方法模拟断开连接
-    if (s->raft.leader_state.promotee_id == 0 && cnt > 3 && flag == 1) {
-        flag++;
-        struct raft_change raft_change_req;
-        removeRaft = s->raft.id + 1;
-        if (removeRaft == 4)
-            removeRaft = 1;
-        printf("assign %d voter to spare\n", removeRaft);
-        raft_assign(&s->raft, &raft_change_req, removeRaft, RAFT_SPARE,
-                    raft_change_cb_mock);
-    }
-    if (s->raft.leader_state.promotee_id == 0 && flag == 3 &&
-        s->raft.configuration_uncommitted_index == 0) {
-        flag++;
-        printf("try remove raft server %d\n", removeRaft);
-        struct raft_change raft_change_req;
-        raft_remove(&s->raft, &raft_change_req, removeRaft,
-                    raft_change_cb_mock);
     }
 
     buf.len = sizeof(uint64_t);
     buf.base = raft_malloc(buf.len);
     if (buf.base == NULL) {
-        Log(s->id, "serverTimerCb(): out of memory");
+        cli_printf("%lld: serverApply(): out of memory\n", server->id);
+        cli_cmd_end();
         return;
     }
 
@@ -347,14 +283,103 @@ static void serverTimerCb(uv_timer_t *timer)
 
     req = raft_malloc(sizeof *req);
     if (req == NULL) {
-        Log(s->id, "serverTimerCb(): out of memory");
+        cli_printf("%lld: serverApply(): out of memory\n", server->id);
+        cli_cmd_end();
         return;
     }
-    req->data = s;
+    req->data = server;
 
-    rv = raft_apply(&s->raft, req, &buf, 1, serverApplyCb);
+    rv = raft_apply(&server->raft, req, &buf, 1, serverApplyCb);
     if (rv != 0) {
-        Logf(s->id, "raft_apply(): %s", raft_errmsg(&s->raft));
+        cli_printf("%lld: raft_apply(): %s\n", server->id, raft_errmsg(&server->raft));
+        cli_cmd_end();
+        return;
+    }
+}
+
+/* Called after a request to add a new server to the cluster has been
+ * completed. */
+void serverAddCb(struct raft_change *req, int status) {
+    struct Server *s = req->data;
+    raft_free(req);
+    if (status != 0) {
+        if (status != RAFT_LEADERSHIPLOST) {
+            cli_printf("%lld: raft_add() callback: %s (%d)\n", s->id, raft_errmsg(&s->raft), status);
+        }
+        cli_cmd_end();
+        return;
+    }
+    cli_printf("%lld: add server succeeded\n", s->id);
+    cli_cmd_end();
+}
+
+/* Called when received client's add server command. */
+static void serverAdd(int argc, char *argv[])
+{
+    raft_id id = strtoll(argv[1], NULL, 10);
+    char *address = argv[2];
+    struct raft_change *req;
+    int rv;
+
+    if (server->raft.state != RAFT_LEADER) {
+        return;
+    }
+
+    req = raft_malloc(sizeof *req);
+    if (req == NULL) {
+        cli_printf("%lld: serverAdd(): out of memory\n", server->id);
+        cli_cmd_end();
+        return;
+    }
+    req->data = server;
+
+    rv = raft_add(&server->raft, req, id, address, serverAddCb);
+    if (rv != 0) {
+        cli_printf("%lld: raft_add(): %s\n", server->id, raft_errmsg(&server->raft));
+        cli_cmd_end();
+        return;
+    }
+}
+
+/* Called after a request to remove a server from the cluster has been
+ * completed. */
+void serverRemoveCb(struct raft_change *req, int status) {
+    struct Server *s = req->data;
+    raft_free(req);
+    if (status != 0) {
+        if (status != RAFT_LEADERSHIPLOST) {
+            cli_printf("%lld: raft_remove() callback: %s (%d)\n", s->id, raft_errmsg(&s->raft), status);
+        }
+        cli_cmd_end();
+        return;
+    }
+    cli_printf("%lld: remove server succeeded\n", s->id);
+    cli_cmd_end();
+}
+
+/* Called when received client's remove server command. */
+static void serverRemove(int argc, char *argv[])
+{
+    raft_id id = strtoll(argv[1], NULL, 10);
+    struct raft_change *req;
+    int rv;
+
+    if (server->raft.state != RAFT_LEADER) {
+        return;
+    }
+
+    req = raft_malloc(sizeof *req);
+    if (req == NULL) {
+        cli_printf("%lld: serverRemove(): out of memory\n", server->id);
+        cli_cmd_end();
+        return;
+    }
+    req->data = server;
+
+    rv = raft_remove(&server->raft, req, id, serverRemoveCb);
+    if (rv != 0) {
+        cli_printf("%lld: raft_remove(): %s\n", server->id, raft_errmsg(&server->raft));
+        cli_cmd_end();
         return;
     }
 }
@@ -365,19 +390,10 @@ static int ServerStart(struct Server *s)
     int rv;
 
     Log(s->id, "starting");
-    // TODO cant`t find raft_start implement
-    /* 调用UvLoad
-     * uvLoadSnapshotAndEntries：加载最后一个快照（如果有）和数据目录的所有段文件中包含的所有条目*/
+
     rv = raft_start(&s->raft);
     if (rv != 0) {
         Logf(s->id, "raft_start(): %s", raft_errmsg(&s->raft));
-        goto err;
-    }
-    // serverTimerCb在下一次循环迭代时运行，并之后每隔125毫秒执行serverTimerCb
-    // TODO 修改了时间
-    rv = uv_timer_start(&s->timer, serverTimerCb, 0, 500);
-    if (rv != 0) {
-        Logf(s->id, "uv_timer_start(): %s", uv_strerror(rv));
         goto err;
     }
 
@@ -391,16 +407,8 @@ err:
 static void ServerClose(struct Server *s, ServerCloseCb cb)
 {
     s->close_cb = cb;
-
     Log(s->id, "stopping");
-
-    /* Close the timer asynchronously if it was successfully
-     * initialized. Otherwise invoke the callback immediately. */
-    if (s->timer.data != NULL) {
-        uv_close((struct uv_handle_s *)&s->timer, serverTimerCloseCb);
-    } else {
-        s->close_cb(s);
-    }
+    s->close_cb(s);
 }
 
 /********************************************************************
@@ -409,39 +417,55 @@ static void ServerClose(struct Server *s, ServerCloseCb cb)
  *
  ********************************************************************/
 
-static void mainServerCloseCb(struct Server *server)
+static void mainServerCloseCb(struct Server *s)
 {
-    struct uv_signal_s *sigint = server->data;
+    struct uv_signal_s *sigint = s->data;
     uv_close((struct uv_handle_s *)sigint, NULL);
 }
 
 /* Handler triggered by SIGINT. It will initiate the shutdown sequence. */
 static void mainSigintCb(struct uv_signal_s *handle, int signum)
 {
-    struct Server *server = handle->data;
+    struct Server *s = handle->data;
     assert(signum == SIGINT);
     uv_signal_stop(handle);
-    server->data = handle;
-    ServerClose(server, mainServerCloseCb);
+    s->data = handle;
+    ServerClose(s, mainServerCloseCb);
 }
 
 int main(int argc, char *argv[])
 {
     struct uv_loop_s loop;
     struct uv_signal_s sigint; /* To catch SIGINT and exit. */
-    struct Server server;
     const char *dir;
-    unsigned id;
+    const char *address;
+    unsigned long long id;
+    char *socketPath;
+    char *endPtr;
     int rv;
 
-    if (argc != 3) {
-        printf("usage: example-server <dir> <id>\n");
+    if (argc != 5) {
+        printf("usage: example-server <dir> <id> <address> <socketPath>\n");
         return 1;
     }
     dir = argv[1];
-    id = (unsigned)atoi(argv[2]);
+    address = argv[3];
+    socketPath = argv[4];
+    errno = 0;
+    id = (unsigned)strtoll(argv[2], &endPtr, 10);
+    if (errno != 0 || id == 0 || *endPtr != '\0') {
+        printf("Invalid id, exiting.\n");
+        return -1;
+    }
+
     /* Ignore SIGPIPE, see https://github.com/joyent/libuv/issues/1254 */
     signal(SIGPIPE, SIG_IGN);
+
+    /* Register commands. */
+    init_cli_server(socketPath);
+    cli_reg_cmd("apply", "apply a client command to cluster.", serverApply);
+    cli_reg_cmd("add", "add a new server to cluster.", serverAdd);
+    cli_reg_cmd("remove", "remove a server from cluster.", serverRemove);
 
     /* Initialize the libuv loop. */
     rv = uv_loop_init(&loop);
@@ -450,11 +474,14 @@ int main(int argc, char *argv[])
         goto err;
     }
 
+    server = malloc(sizeof(struct Server));
+
     /* Initialize the example server. */
-    rv = ServerInit(&server, &loop, dir, id);
+    rv = ServerInit(server, &loop, dir, id, address);
     if (rv != 0) {
         goto err_after_server_init;
     }
+
     /* Add a signal handler to stop the example server upon SIGINT. */
     rv = uv_signal_init(&loop, &sigint);
     if (rv != 0) {
@@ -469,7 +496,7 @@ int main(int argc, char *argv[])
     }
 
     /* Start the server. */
-    rv = ServerStart(&server);
+    rv = ServerStart(server);
     if (rv != 0) {
         goto err_after_signal_init;
     }
@@ -482,12 +509,14 @@ int main(int argc, char *argv[])
 
     uv_loop_close(&loop);
 
+    // exit_cli_server();
+
     return rv;
 
 err_after_signal_init:
     uv_close((struct uv_handle_s *)&sigint, NULL);
 err_after_server_init:
-    ServerClose(&server, NULL);
+    ServerClose(server, NULL);
     uv_run(&loop, UV_RUN_DEFAULT);
     uv_loop_close(&loop);
 err:

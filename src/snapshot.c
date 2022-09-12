@@ -12,23 +12,23 @@
 #define tracef(...) Tracef(r->tracer, __VA_ARGS__)
 
 void snapshotClose(struct raft_snapshot *s)
-    {
+{
     unsigned i;
     configurationClose(&s->configuration);
     for (i = 0; i < s->n_bufs; i++) {
         raft_free(s->bufs[i].base);
     }
     raft_free(s->bufs);
-    }
+}
 
-    void snapshotDestroy(struct raft_snapshot *s)
-        {
+void snapshotDestroy(struct raft_snapshot *s)
+{
     snapshotClose(s);
     raft_free(s);
-        }
+}
 
-        int snapshotRestore(struct raft *r, struct raft_snapshot *snapshot)
-            {
+int snapshotRestore(struct raft *r, struct raft_snapshot *snapshot)
+{
     int rv;
 
     assert(snapshot->n_bufs == 1);
@@ -43,7 +43,8 @@ void snapshotClose(struct raft_snapshot *s)
     configurationClose(&r->configuration);
     r->configuration = snapshot->configuration;
     r->configuration_index = snapshot->configuration_index;
-    configurationTrace(r, &r->configuration, "configuration restore from snapshot");
+    configurationTrace(r, &r->configuration,
+                       "configuration restore from snapshot");
 
     r->commit_index = snapshot->index;
     r->last_applied = snapshot->index;
@@ -54,10 +55,10 @@ void snapshotClose(struct raft_snapshot *s)
     raft_free(snapshot->bufs);
 
     return 0;
-            }
+}
 
-            int snapshotCopy(const struct raft_snapshot *src, struct raft_snapshot *dst)
-                {
+int snapshotCopy(const struct raft_snapshot *src, struct raft_snapshot *dst)
+{
     int rv;
     unsigned i;
     size_t size;
@@ -95,6 +96,6 @@ void snapshotClose(struct raft_snapshot *s)
     dst->n_bufs = 1;
 
     return 0;
-                }
+}
 
 #undef tracef

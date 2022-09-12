@@ -92,6 +92,7 @@ BYTE__INLINE void bytePut64(void **cursor, uint64_t value)
 {
     uint64_t **p = (uint64_t **)cursor;
     **p = byteFlip64(value);
+    //这个加一，就像当于数组转到下一位了
     *p += 1;
 }
 

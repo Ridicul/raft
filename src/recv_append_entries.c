@@ -12,6 +12,7 @@
 #include "tracing.h"
 
 #define tracef(...) Tracef(r->tracer, __VA_ARGS__)
+#define BAD_ROLE -1
 static int getRaftRole(struct raft *r)
 {
     for (unsigned i = 0; i < r->configuration.n; i++) {
@@ -19,8 +20,7 @@ static int getRaftRole(struct raft *r)
             return r->configuration.servers[i].role;
         }
     }
-    //TODO BAD_ROLE
-    return -1;
+    return BAD_ROLE;
 }
 static void recvSendAppendEntriesResultCb(struct raft_io_send *req, int status)
 {
@@ -181,8 +181,7 @@ int recvAppendEntries(struct raft *r,
     assert(address != NULL);
 
     int role = getRaftRole(r);
-    if (role == -1 || role == RAFT_LOGGER) {
-//        printf("args->entries[0].type %d\n",args->entries[0].type);
+    if (role == BAD_ROLE || role == RAFT_LOGGER) {
         return recvLoggerAppendEntries(r, id, address, args);
     }
 

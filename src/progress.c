@@ -67,7 +67,6 @@ int progressRebuildArray(struct raft *r,
                          const struct raft_configuration *configuration,
                          raft_index index)
 {
-    printf("progressRebuildArray\n");
     raft_index last_index = logLastIndex(&r->log);
     struct raft_progress *progress;
     unsigned i;
@@ -291,10 +290,15 @@ bool progressMaybeUpdate(struct raft *r, unsigned i, raft_index last_index)
 {
     struct raft_progress *p = &r->leader_state.progress[i];
     bool updated = false;
+    if(i ==3)
+        printf("p->match_index %d\n",p->match_index);
     if (p->match_index < last_index) {
+
         p->match_index = last_index;
         updated = true;
     }
+    if(i ==3)
+        printf("p->next_index %d\n",p->next_index);
     if (p->next_index < last_index + 1) {
         p->next_index = last_index + 1;
     }

@@ -462,8 +462,8 @@ static size_t updateLastStored(struct raft *r,
          * the entry we wrote on disk. */
         assert(local_term != 0 && local_term == entry->term);
     }
-    printf("server %d last_stored %d first_index + n_entries %d\n",r->id,r->last_stored, first_index + n_entries);
     r->last_stored += i;
+    printf("server %d last_stored %d first_index + n_entries %d\n",r->id,r->last_stored, first_index + n_entries);
     return i;
 }
 
@@ -700,7 +700,8 @@ int replicationUpdate(struct raft *r,
     int rv;
 
     i = configurationIndexOf(&r->configuration, server->id);
-
+    if(server->id == 4)
+        printf("configurationIndexOf i %d\n", i);
     assert(r->state == RAFT_LEADER);
     assert(i < r->configuration.n);
 
@@ -746,6 +747,8 @@ int replicationUpdate(struct raft *r,
      *   If successful update nextIndex and matchIndex for follower.
      */
     if (!progressMaybeUpdate(r, i, last_index)) {
+        if(server->id ==  4)
+            printf("progressMaybeUpdate last_index %d\n", last_index);
         return 0;
     }
 
@@ -760,7 +763,8 @@ int replicationUpdate(struct raft *r,
             /* Transition to pipeline */
             progressToPipeline(r, i);
     }
-
+    if (server->id == 4)
+        printf("progressState %d\n", progressState(r, i));
     /* If the server is currently being promoted and is catching with logs,
      * update the information about the current catch-up round, and possibly
      * proceed with the promotion. */
@@ -897,7 +901,6 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
         goto out;
     }
 
-    if(r->id == 4) printf("request index %d, n_entries %d\n", request->index, args->n_entries);
     i = updateLastStored(r, request->index, args->entries, args->n_entries);
     /* If none of the entries that we persisted is present anymore in our
      * in-memory log, there's nothing to report or to do. We just discard
@@ -907,7 +910,11 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
     if (i == 0 || r->state != RAFT_FOLLOWER) {
         goto out;
     }
-
+    if(r->id==4 && r->last_stored + 1 != request->index + args->n_entries){
+        r->last_stored = request->index + args->n_entries - 1;
+        printf("logger last_stored update to %d reques_index + n_entries %d\n",
+               r->last_stored, request->index + args->n_entries);
+    }
     /* Possibly apply configuration changes as uncommitted. */
     for (j = 0; j < i; j++) {
         struct raft_entry *entry = &args->entries[j];
@@ -924,7 +931,6 @@ static void appendFollowerCb(struct raft_io_append *req, int status)
             }
         }
     }
-    if(r->id == 4) printf("updateLastStored\n");
     /* From Figure 3.1:
      *
      *   AppendEntries RPC: Receiver implementation: If leaderCommit >
@@ -1176,7 +1182,7 @@ int loggerReplicationAppend(struct raft *r,
     request->req.data = request;
     printf("r.io.append request args entries term %d %d n_entries %d index %d\n",
            request->args.entries[0].term, args->entries[0].term, request->args.n_entries,request->index);
-    printf("request args entries address %d\n",&request->args.entries[0]);
+
     rv = r->io->append(r->io, &request->req, request->args.entries,
                        request->args.n_entries, appendFollowerCb);
     if (rv != 0) {
@@ -1193,7 +1199,8 @@ err_after_acquire_entries:
                request->args.n_entries);
 
 err_after_request_alloc:
-    /* Release all entries added to the in-memory log, making
+    /*
+     * Release all entries added to the in-memory log, making
      * sure the in-memory log and disk don't diverge, leading
      * to future log entries not being persisted to disk.
      */
@@ -1598,6 +1605,7 @@ static void applyChange(struct raft *r, const raft_index index)
 
 static bool shouldTakeSnapshot(struct raft *r)
 {
+
     /* If we are shutting down, let's not do anything. */
     if (r->state == RAFT_UNAVAILABLE) {
         return false;
@@ -1610,6 +1618,7 @@ static bool shouldTakeSnapshot(struct raft *r)
     };
 
     /* If we didn't reach the threshold yet, do nothing. */
+    //TODO 这里需要注意的是logger 的snapshot last_index怎么维护
     if (r->last_applied - r->log.snapshot.last_index < r->snapshot.threshold) {
         return false;
     }
@@ -1647,7 +1656,7 @@ static void takeSnapshotCb(struct raft_io_snapshot_put *req, int status)
                snapshot->term, raft_strerror(status));
         goto out;
     }
-
+    printf("server %d call logSnapshot and log address %x\n", r->id, &r->log);
     logSnapshot(&r->log, snapshot->index, r->snapshot.trailing);
 out:
     takeSnapshotClose(r, snapshot);
@@ -1658,6 +1667,8 @@ static int putSnapshot(struct raft *r,
                        struct raft_snapshot *snapshot,
                        raft_io_snapshot_put_cb cb)
 {
+    printf("raft server %d snapshot.pending term %d index %d \n",r->id,
+           r->snapshot.pending.term,r->snapshot.pending.index);
     int rv;
     assert(r->snapshot.put.data == NULL);
     r->snapshot.put.data = r;
@@ -1668,13 +1679,11 @@ static int putSnapshot(struct raft *r,
         r->snapshot.pending.term = 0;
         r->snapshot.put.data = NULL;
     }
-
     return rv;
 }
 
 static void takeSnapshotDoneCb(struct raft_io_async_work *take, int status)
 {
-    printf("takeSnapshotDoneCb\n");
     struct raft *r = take->data;
     struct raft_snapshot *snapshot = &r->snapshot.pending;
     int rv;
@@ -1705,10 +1714,11 @@ static int takeSnapshotAsync(struct raft_io_async_work *take)
 
 static int takeSnapshot(struct raft *r)
 {
+
     struct raft_snapshot *snapshot;
     int rv;
 
-    printf("server %d take snapshot at %lld\n", r->id, r->last_applied);
+    printf("server %d take snapshot at %lld*******************\n", r->id, r->last_applied);
 
     snapshot = &r->snapshot.pending;
     snapshot->index = r->last_applied;
@@ -1722,7 +1732,7 @@ static int takeSnapshot(struct raft *r)
         goto abort;
     }
     snapshot->configuration_index = r->configuration_index;
-
+//    FsmSnapshot
     rv = r->fsm->snapshot(r->fsm, &snapshot->bufs, &snapshot->n_bufs);
     if (rv != 0) {
         /* Ignore transient errors. We'll retry next time. */
@@ -1732,7 +1742,7 @@ static int takeSnapshot(struct raft *r)
         raft_configuration_close(&snapshot->configuration);
         goto abort;
     }
-
+    printf("r->fsm->version %d\n", r->fsm->version);
     bool sync_snapshot = r->fsm->version < 3 || r->fsm->snapshot_async == NULL;
     if (sync_snapshot) {
         /* putSnapshot will clean up config and buffers in case of error */
@@ -1762,7 +1772,8 @@ abort:
     r->snapshot.pending.term = 0;
     return rv;
 }
-
+//TODO 三种调用，其一、leader给follower发的appendEntriesRPC，检查leaderCommit和commitIndex
+//其二、replicationUpdate和appendLeaderCb都是leader去调用这些方法，然后再调用replicationApply
 int replicationApply(struct raft *r)
 {
     raft_index index;
@@ -1813,6 +1824,7 @@ int replicationApply(struct raft *r)
 
     if (shouldTakeSnapshot(r)) {
         rv = takeSnapshot(r);
+        printf("server %d takeSnapshot done...\n", r->id);
     }
 
     return rv;

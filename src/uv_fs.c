@@ -11,6 +11,8 @@
 #include "heap.h"
 #include "uv_os.h"
 
+//检查给定的路径是否可用
+//被uvInit调用，还不知道干嘛用的？
 int UvFsCheckDir(const char *dir, char *errmsg)
 {
     struct uv_fs_s req;
@@ -50,7 +52,7 @@ int UvFsCheckDir(const char *dir, char *errmsg)
 
     return 0;
 }
-
+/* Sync the given directory by calling fsync(). */
 int UvFsSyncDir(const char *dir, char *errmsg)
 {
     uv_file fd;
@@ -60,7 +62,7 @@ int UvFsSyncDir(const char *dir, char *errmsg)
         UvOsErrMsg(errmsg, "open directory", rv);
         return RAFT_IOERR;
     }
-    rv = UvOsFsync(fd);
+    rv = UvOsFsync(fd);//将文件的核心状态与存储设备同步
     UvOsClose(fd);
     if (rv != 0) {
         UvOsErrMsg(errmsg, "fsync directory", rv);
@@ -68,7 +70,7 @@ int UvFsSyncDir(const char *dir, char *errmsg)
     }
     return 0;
 }
-
+//检查文件是否存在
 int UvFsFileExists(const char *dir,
                    const char *filename,
                    bool *exists,
@@ -79,6 +81,7 @@ int UvFsFileExists(const char *dir,
     int rv;
 
     rv = UvOsJoin(dir, filename, path);
+//    path被封装返回
     if (rv != 0) {
         return RAFT_INVALID;
     }
@@ -100,6 +103,7 @@ out:
 }
 
 /* Get the size of the given file. */
+//查看文件大小
 int UvFsFileSize(const char *dir,
                  const char *filename,
                  off_t *size,
@@ -123,7 +127,7 @@ int UvFsFileSize(const char *dir,
 
     return 0;
 }
-
+//根据文件大小来判断是不是为空
 int UvFsFileIsEmpty(const char *dir,
                     const char *filename,
                     bool *empty,
@@ -141,6 +145,7 @@ int UvFsFileIsEmpty(const char *dir,
 }
 
 /* Open a file in a directory. */
+//在目录下打开一个文件
 static int uvFsOpenFile(const char *dir,
                         const char *filename,
                         int flags,
@@ -178,7 +183,7 @@ int UvFsOpenFileForReading(const char *dir,
 
     return uvFsOpenFile(dir, filename, flags, 0, fd, errmsg);
 }
-
+/* 在给定目录中创建给定文件并为其分配给定大小，返回其文件描述符。该文件必须尚不存在。 */
 int UvFsAllocateFile(const char *dir,
                      const char *filename,
                      size_t size,
@@ -228,7 +233,7 @@ err:
     assert(rv != 0);
     return rv;
 }
-
+//
 static int uvFsWriteFile(const char *dir,
                          const char *filename,
                          int flags,
@@ -236,6 +241,7 @@ static int uvFsWriteFile(const char *dir,
                          unsigned n_bufs,
                          char *errmsg)
 {
+    printf("uvFsWriteFile dir %s filename %s\n",dir,filename);
     uv_file fd;
     int rv;
     size_t size;
@@ -281,6 +287,7 @@ int UvFsMakeFile(const char *dir,
                  unsigned n_bufs,
                  char *errmsg)
 {
+    printf("UvFsMakeFile dir %s filename %s\n", dir, filename);
     int rv;
     char tmp_filename[UV__FILENAME_LEN+1] = {0};
     char path[UV__PATH_SZ] = {0};
@@ -295,6 +302,7 @@ int UvFsMakeFile(const char *dir,
     }
     int flags = UV_FS_O_WRONLY | UV_FS_O_CREAT | UV_FS_O_EXCL;
     rv = uvFsWriteFile(dir, tmp_filename, flags, bufs, n_bufs, errmsg);
+    //TODO 这里结束测试一下？exit thread？
     if (rv != 0) {
         goto err_after_tmp_create;
     }
@@ -321,6 +329,7 @@ int UvFsMakeFile(const char *dir,
     if (rv != 0) {
         return RAFT_INVALID;
     }
+
     rv = UvOsRename(tmp_path, path);
     if (rv != 0) {
         UvOsErrMsg(errmsg, "rename", rv);
@@ -354,6 +363,7 @@ int UvFsMakeOrOverwriteFile(const char *dir,
     int rv;
 
     rv = UvOsJoin(dir, filename, path);
+    printf("UvOsJoin path %s\n",path);
     if (rv != 0) {
         return RAFT_INVALID;
     }
@@ -369,7 +379,6 @@ open:
         }
         goto err;
     }
-
     rv = UvOsWrite(fd, (const uv_buf_t *)buf, 1, 0);
     if (rv != (int)(buf->len)) {
         if (rv < 0) {
@@ -414,7 +423,7 @@ err_after_file_open:
 err:
     return RAFT_IOERR;
 }
-
+//将给定文件描述符中的 buf->len 字节准确读取到 buf->base 中。如果读取的字节数少于 buf->len 则失败。
 int UvFsReadInto(uv_file fd, struct raft_buffer *buf, char *errmsg)
 {
     int rv;
@@ -432,7 +441,7 @@ int UvFsReadInto(uv_file fd, struct raft_buffer *buf, char *errmsg)
     }
     return 0;
 }
-
+//读取给定文件的所有内容。
 int UvFsReadFile(const char *dir,
                  const char *filename,
                  struct raft_buffer *buf,
@@ -484,7 +493,28 @@ err_after_open:
 err:
     return rv;
 }
-
+/**
+ * 追加请求的最佳路径是：
+ * - 如果有当前段并且它有足够的空闲容量来保存请求中的条目，则将请求排队，将其链接到当前段。
+ * - 如果没有当前段，或者没有足够的空闲容量来保存请求中的条目，
+ * 则请求准备一个新的打开段，将请求排队并将其链接到新请求的段。
+ * - 等待对当前段的任何挂起写入完成，如果我们要求新段，则等待准备请求。还要等待任何正在进行的障碍被移除。
+ * - 提交对此追加请求中的条目的写入请求。写入请求可能包含其他针对当前段的附加请求，
+ * 这些请求可能在此期间已经累积，
+ * 如果我们一直在等待准备一个段，或者等待之前的写入完成或移除障碍。
+ * - 等待写入请求完成并触发附加请求的回调。
+ * 可能的失败模式有：
+ * - 准备新段的请求失败。
+ * - 写请求失败。
+ * - 未能提交完成新段的请求。
+ * 在所有这些情况下，我们将实例标记为错误并触发相关回调。正在写入或等待写入的打开段。
+ * @param dir
+ * @param filename
+ * @param buf
+ * @param errmsg
+ * @return
+ */
+//将给定文件中的 buf->len 字节准确读取到 buf->base 中。如果读取的字节数少于 buf->len 则失败。
 int UvFsReadFileInto(const char *dir,
                      const char *filename,
                      struct raft_buffer *buf,
@@ -518,7 +548,7 @@ err_after_open:
 err:
     return rv;
 }
-
+//同步删除文件，调用 unlink() 系统调用。
 int UvFsRemoveFile(const char *dir, const char *filename, char *errmsg)
 {
     char path[UV__PATH_SZ];
@@ -534,7 +564,7 @@ int UvFsRemoveFile(const char *dir, const char *filename, char *errmsg)
     }
     return 0;
 }
-
+//同步重命名文件
 int UvFsRenameFile(const char *dir,
 		   const char *filename1,
 		   const char *filename2,
@@ -561,13 +591,14 @@ int UvFsRenameFile(const char *dir,
 
     return 0;
 }
-
+//将文件同步截断为给定大小，然后重命名。
 int UvFsTruncateAndRenameFile(const char *dir,
                               size_t size,
                               const char *filename1,
                               const char *filename2,
                               char *errmsg)
 {
+    //应该还是比较多地方用？
     char path1[UV__PATH_SZ];
     char path2[UV__PATH_SZ];
     uv_file fd;
@@ -588,6 +619,7 @@ int UvFsTruncateAndRenameFile(const char *dir,
         UvOsErrMsg(errmsg, "open", rv);
         goto err;
     }
+    printf("UvOsTruncate size %d\n", size);
     rv = UvOsTruncate(fd, (off_t)size);
     if (rv != 0) {
         UvOsErrMsg(errmsg, "truncate", rv);

@@ -171,7 +171,6 @@ int raft_add_logger(struct raft *r,
                     const char *address,
                     raft_change_cb cb)
 {
-    printf("raft_add_logger call\n");
     struct raft_configuration configuration;
     int rv;
     rv = membershipCanChangeConfiguration(r);
@@ -280,7 +279,6 @@ int raft_assign(struct raft *r,
     server = configurationGet(&r->configuration, id);
     if (server == NULL) {
         rv = RAFT_NOTFOUND;
-        printf("找不到server\n");
         ErrMsgPrintf(r->errmsg, "no server has ID %llu", id);
         goto err;
     }

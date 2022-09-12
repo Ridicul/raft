@@ -57,6 +57,11 @@ static int restoreMostRecentConfiguration(struct raft *r,
  * we can't be sure a configuration change has been committed and we need to be
  * ready to roll back to the last committed configuration.
  */
+/*
+ * 将这些entries重新载入到log数组里面去主要方法是logAppend
+ * TODO 为什么这里又在重新赋值last_stored和调用restoreMostRecentConfiguration
+ * 因为这个方法调用前，检查了snapshot是否为NULL，如果为NULL，而segment里又有new configuration，这也需要重新加载
+ */
 static int restoreEntries(struct raft *r,
                           raft_index snapshot_index,
                           raft_term snapshot_term,
@@ -68,6 +73,7 @@ static int restoreEntries(struct raft *r,
     raft_index conf_index = 0;
     size_t i;
     int rv;
+    //相当于一个对r->log的初始化，last_index、last_term、offset_index
     logStart(&r->log, snapshot_index, snapshot_term, start_index);
     r->last_stored = start_index - 1;
     for (i = 0; i < n; i++) {
@@ -84,6 +90,7 @@ static int restoreEntries(struct raft *r,
         }
     }
     if (conf != NULL) {
+        //修改struct raft的configuration相关的信息。
         rv = restoreMostRecentConfiguration(r, conf, conf_index);
         if (rv != 0) {
             goto err;
@@ -102,6 +109,7 @@ err:
 /* If we're the only voting server in the configuration, automatically
  * self-elect ourselves and convert to leader without waiting for the election
  * timeout. */
+/* 当集群只有一个voter */
 static int maybeSelfElect(struct raft *r)
 {
     const struct raft_server *server;
@@ -109,13 +117,10 @@ static int maybeSelfElect(struct raft *r)
     server = configurationGet(&r->configuration, r->id);
     if (server == NULL || server->role != RAFT_VOTER ||
         configurationVoterCount(&r->configuration) > 1) {
-        //        printf("configurationVoterCount(&r->configuration): %d\n",
-        //        configurationVoterCount(&r->configuration));
         return 0;
     }
     /* Converting to candidate will notice that we're the only voter and
      * automatically convert to leader. */
-    printf("start call convertToCandidate\n");
     rv = convertToCandidate(r, false /* disrupt leader */);
     if (rv != 0) {
         return rv;
@@ -160,6 +165,7 @@ int raft_start(struct raft *r)
     if (snapshot != NULL) {
         tracef("restore snapshot with last index %llu and last term %llu",
                snapshot->index, snapshot->term);
+        //主要就是一个将last_snapshot的一些信息赋给struct raft，configuration（index）、committed_index&last_applied&last_stored = snapshot->index;
         rv = snapshotRestore(r, snapshot);
         if (rv != 0) {
             snapshotDestroy(snapshot);
@@ -194,6 +200,7 @@ int raft_start(struct raft *r)
     /* Start the I/O backend. The tickCb function is expected to fire every
      * r->heartbeat_timeout milliseconds and recvCb whenever an RPC is
      * received. */
+    //UvStart，注册tickCb、recvCb
     rv = r->io->start(r->io, r->heartbeat_timeout, tickCb, recvCb);
     if (rv != 0) {
         printf("io start failed %d\n", rv);

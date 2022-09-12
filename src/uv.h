@@ -52,6 +52,7 @@ struct uvMetadata
 };
 
 /* Hold state of a libuv-based raft_io implementation. */
+//TODO 需要理解这个结构体作为其他那些结构体的成员
 struct uv
 {
     struct raft_io *io;                  /* I/O object we're implementing */
@@ -60,7 +61,7 @@ struct uv
     struct raft_uv_transport *transport; /* Network transport */
     struct raft_tracer *tracer;          /* Debug tracing */
     raft_id id;                          /* Server ID */
-    int state;                           /* Current state */
+    int state;                           /* Current state UV__ACTIVE、UV__CLOSED*/
     bool snapshot_compression;           /* If compression is enabled */
     bool errored;                        /* If a disk I/O error was hit */
     bool direct_io;                      /* Whether direct I/O is supported */
@@ -140,6 +141,7 @@ void uvSegmentSort(struct uvSegmentInfo *infos, size_t n_infos);
 /* Keep only the closed segments whose entries are within the given trailing
  * amount past the given snapshot last index. If the given trailing amount is 0,
  * unconditionally delete all closed segments. */
+
 int uvSegmentKeepTrailing(struct uv *uv,
                           struct uvSegmentInfo *segments,
                           size_t n,
@@ -169,6 +171,7 @@ int uvSegmentLoadAll(struct uv *uv,
  * file.
  *
  * The memory is aligned at disk block boundary, to allow for direct I/O. */
+//uvSegmentBuffer 一个动态分配的缓冲区，保存要写入段文件的数据。
 struct uvSegmentBuffer
 {
     size_t block_size; /* Disk block size for direct I/O */
@@ -233,6 +236,7 @@ struct uvSnapshotInfo
 };
 
 /* Render the filename of the data file of a snapshot */
+
 void uvSnapshotFilenameOf(struct uvSnapshotInfo *info, char *filename);
 
 /* Upon success `orphan` will be true if filename is a snapshot file without a

@@ -77,7 +77,7 @@ static int uvMetadataLoadN(const char *dir,
     }
 
     memset(metadata, 0, sizeof *metadata);
-
+    printf("uvMetadataLoadN Render the metadata path exist %d\n",exists);
     /* If the file does not exist, just return. */
     if (!exists) {
         return 0;
@@ -186,6 +186,7 @@ int uvMetadataStore(struct uv *uv, const struct uvMetadata *metadata)
 
     /* Render the metadata file name. */
     n = uvMetadataFileIndex(metadata->version);
+    printf("uvMetadataStore Render the metadata path\n");
     uvMetadataFilename(n, filename);
 
     /* Write the metadata file, creating it if it does not exist. */

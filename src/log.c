@@ -52,6 +52,7 @@ static int refsTryInsert(struct raft_entry_ref *table,
     assert(collision != NULL);
 
     /* Calculate the hash table key for the given index. */
+    //利用given index计算hash key
     key = refsKey(index, size);
     bucket = &table[key];
 
@@ -161,6 +162,7 @@ static int refsMove(struct raft_entry_ref *bucket,
 }
 
 /* Grow the size of the reference count hash table. */
+//hash table 扩容，将原来的raft_entry_ref移动到新的table
 static int refsGrow(struct raft_log *l)
 {
     struct raft_entry_ref *table; /* New hash table. */
@@ -183,6 +185,7 @@ static int refsGrow(struct raft_log *l)
     for (i = 0; i < l->refs_size; i++) {
         struct raft_entry_ref *bucket = &l->refs[i];
         if (bucket->count > 0) {
+            //将原来的引用移动到扩容后的table
             int rv = refsMove(bucket, table, size);
             if (rv != 0) {
                 return rv;
@@ -203,6 +206,7 @@ static int refsGrow(struct raft_log *l)
 
 /* Initialize the reference count of the entry with the given index, setting it
  * to 1. */
+//只有一种情况会调用，就是将Append a new entry to the log.的时候，即logAppend()方法
 static int refsInit(struct raft_log *l,
                     const raft_term term,
                     const raft_index index)
@@ -229,10 +233,11 @@ static int refsInit(struct raft_log *l,
      * We limit the number of times we try to grow the table to 10, to avoid
      * eating up too much memory. In practice, there should never be a case
      * where this is not enough. */
+    //TODO 待理解该循环的作用
     for (i = 0; i < 10; i++) {
         bool collision;
         int rc;
-
+        //refInit的count就是1
         rc = refsTryInsert(l->refs, l->refs_size, term, index, 1, &collision);
         if (rc != 0) {
             return RAFT_NOMEM;
@@ -247,15 +252,19 @@ static int refsInit(struct raft_log *l,
             return rc;
         }
     };
-
     return RAFT_NOMEM;
 }
 
 /* Increment the refcount of the entry with the given term and index. */
+//TODO refsIncr实际上增加的是raft_entry_ref.count？
+//首先是只又logAcquire
 static void refsIncr(struct raft_log *l,
                      const raft_term term,
                      const raft_index index)
 {
+    //参数只有该entry的index和term，但是并不能直接确认其在raft_entry_ref中的位置
+    //通过index获得key，因为不同的index可能会有同一个key，但是raft中可以通过index和term唯一确定一个entry
+    //所以需要比较所有key的term，才能找到entry
     size_t key;                  /* Hash table key for the given index. */
     struct raft_entry_ref *slot; /* Slot for the given term/index */
 
@@ -268,6 +277,7 @@ static void refsIncr(struct raft_log *l,
     /* Lookup the slot associated with the given term/index, which must have
      * been previously inserted. */
     slot = &l->refs[key];
+    // find the same index&term raft_entry_ref
     while (1) {
         assert(slot != NULL);
         assert(slot->index == index);
@@ -283,6 +293,7 @@ static void refsIncr(struct raft_log *l,
 
 /* Decrement the refcount of the entry with the given index. Return a boolean
  * indicating whether the entry has now zero references. */
+//TODO review code
 static bool refsDecr(struct raft_log *l,
                      const raft_term term,
                      const raft_index index)
@@ -296,14 +307,17 @@ static bool refsDecr(struct raft_log *l,
     assert(index > 0);
 
     key = refsKey(index, l->refs_size);
-//    printf("refsDecr refsKey\n");
+
+
     prev_slot = NULL;
 
     /* Lookup the slot associated with the given term/index, keeping track of
      * its previous slot in the bucket list. */
     slot = &l->refs[key];
-//    printf("refs key %d\n", key);
+
     while (1) {
+        printf("refsDecr slot->index %d, index %d, slot->term %d, term %d\n"
+               , slot->index, index, slot->term, term);
         assert(slot != NULL);
         assert(slot->index == index);
         if (slot->term == term) {
@@ -312,10 +326,12 @@ static bool refsDecr(struct raft_log *l,
         prev_slot = slot;
         slot = slot->next;
     }
-
-    slot->count--;
-
-    if (slot->count > 0) {
+    printf("slot->count %d before --\n", slot->count);
+    //TODO logger日志初始化
+    if(slot->count != 0)
+        slot->count--;
+    printf("slot->count %d\n", slot->count);
+    if (slot->count > 0 ) {
         /* The entry is still referenced. */
         return false;
     }
@@ -497,7 +513,7 @@ int loggerLogAppend(struct raft_log *l,
     n = logNumEntries(l);
     printf("loggerLogAppend index %d type %d\n", index, type);
     if (l->size == 2 && l->back == 1) {  // TODO 说明这是第一个加入logger的entry
-
+        //这是logger第一次接收到entry，所以需要refInit所以entry之前的，需要阅读refInit代码
         size = l->size;
 
         while (index > size) {
@@ -520,6 +536,16 @@ int loggerLogAppend(struct raft_log *l,
         l->size = size;
         l->front = 0;
         l->back = index - 1;//TODO 这里需要修改
+        //TODO 遍历所有的entry，然后index顺序增长，term设置为1即可
+        //TODO 以下测试会导致 server 4线程终止？
+//        for(int i=4;i<index;i++){
+//            printf("l->entries[%d].term=%d\n", i, l->entries[i].term);
+//            l->entries[i].term = 1;
+////            l->entries[i].type = 1;
+//            printf("l->entries[%d].term=%d\n", i, l->entries[i].term);
+//            refsInit(l,1,i);
+//        }
+//        printf("logger init raft_log address %x ========================================================\n", l);
     }else{
         //TODO ensureCapacity？
     }
@@ -736,7 +762,6 @@ const struct raft_entry *logGet(struct raft_log *l, const raft_index index)
     return &l->entries[i];
 }
 // TODO logAcquire
-//
 int logAcquire(struct raft_log *l,
                const raft_index index,
                struct raft_entry *entries[],
@@ -818,17 +843,14 @@ void logRelease(struct raft_log *l,
     assert((entries == NULL && n == 0) || (entries != NULL && n > 0));
 
     for (i = 0; i < n; i++) {
-//        printf("logRelease unsigned %d\n",n);
         struct raft_entry *entry = &entries[i];
         bool unref;
 
         unref = refsDecr(l, entry->term, index + i);
-//        printf("refsDecr done \n");
         /* If there are no outstanding references to this entry, free its
          * payload if it's not part of a batch, or check if we can free the
          * batch itself. */
         if (unref) {
-//            printf("refsDecr done \n");
             if (entries[i].batch == NULL) {
                 if (entry->buf.base != NULL) {
                     raft_free(entries[i].buf.base);
@@ -837,9 +859,7 @@ void logRelease(struct raft_log *l,
                 if (entry->batch != batch) {
                     if (!isBatchReferenced(l, entry->batch)) {
                         batch = entry->batch;
-                        printf("entries.batch != NULL\n");
                         raft_free(batch);
-                        printf("entries.batch != NULL\n");
                     }
                 }
             }
@@ -868,11 +888,14 @@ static void clearIfEmpty(struct raft_log *l)
 static void destroyEntry(struct raft_log *l, struct raft_entry *entry)
 {
     if (entry->batch == NULL) {
+        printf("entry batch NULL\n");
         if (entry->buf.base != NULL) {
+            printf("free buf.base\n");
             raft_free(entry->buf.base);
         }
     } else {
         if (!isBatchReferenced(l, entry->batch)) {
+            printf("free batch\n");
             raft_free(entry->batch);
         }
     }
@@ -884,6 +907,7 @@ static void removeSuffix(struct raft_log *l,
                          const raft_index index,
                          bool destroy)
 {
+    printf("removeSuffix!!!!!!!!!!!!!!!!!!!!!!!\n");
     size_t i;
     size_t n;
     raft_index start = index;
@@ -932,6 +956,7 @@ void logDiscard(struct raft_log *l, const raft_index index)
 /* Delete all entries up to the given index (included). */
 static void removePrefix(struct raft_log *l, const raft_index index)
 {
+    printf("raft_log address %x\n", l);
     size_t i;
     size_t n;
 
@@ -941,7 +966,7 @@ static void removePrefix(struct raft_log *l, const raft_index index)
 
     /* Number of entries to delete */
     n = (size_t)(index - indexAt(l, 0)) + 1;
-
+    printf("removePrefix log address %d\n", &l);
     for (i = 0; i < n; i++) {
         struct raft_entry *entry;
         bool unref;
@@ -954,12 +979,16 @@ static void removePrefix(struct raft_log *l, const raft_index index)
             l->front++;
         }
         l->offset++;
-
+        // 现在的问题是，为什么entry->term还是0而不是之前赋值的1？
+        // 要过一遍debug？
+        printf("entry->term %d, entry->index %d\n",entry->term, l->offset);
         unref = refsDecr(l, entry->term, l->offset);
 
         if (unref) {
             printf("删除entry！\n");
             destroyEntry(l, entry);
+        }else{
+            printf("还有引用，不能删除？\n");
         }
     }
     //    printf("log entries 实际长度 %d\n",sizeof(l->entries[0]));

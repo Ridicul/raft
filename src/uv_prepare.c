@@ -141,6 +141,7 @@ static void uvPrepareAfterWorkCb(uv_work_t *work, int status);
 /* Start creating a new segment file. */
 static int uvPrepareStart(struct uv *uv)
 {
+    printf("uvPrepareStart\n");
     struct uvIdleSegment *segment;
     int rv;
 

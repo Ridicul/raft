@@ -53,6 +53,7 @@ static bool uvSnapshotParseFilename(const char *filename,
 static bool uvSnapshotInfoMatch(const char *filename,
                                 struct uvSnapshotInfo *info)
 {
+    //检查这个文件名filename是不是snapshot.meta格式
     if (!uvSnapshotParseFilename(filename, true, &info->term, &info->index,
                                  &info->timestamp)) {
         return false;
@@ -87,6 +88,7 @@ int UvSnapshotInfoAppendIfMatch(struct uv *uv,
     int rv;
 
     /* Check if it's a snapshot metadata filename */
+    /* 检查文件名是否匹配 匹配则包装filename的部分参数到info*/
     matched = uvSnapshotInfoMatch(filename, &info);
     if (!matched) {
         *appended = false;
@@ -124,7 +126,7 @@ int UvSnapshotInfoAppendIfMatch(struct uv *uv,
         return 0;
     }
 
-    ARRAY__APPEND(struct uvSnapshotInfo, info, infos, n_infos, rv);
+    ARRAY__APPEND(struct uvSnapshotInfo, info, infos, n_infos, rv);//在ARRAY__APPEND里有n_infos++操作
     if (rv == -1) {
         return RAFT_NOMEM;
     }
@@ -370,10 +372,13 @@ int UvSnapshotLoad(struct uv *uv,
                    char *errmsg)
 {
     int rv;
+    //snapshot是null，通过meta，也就是info里的文件目录信息，读取出raft_snapshot的index、term、configuration_index、raft_configuration配置
+    //重要的是加载了最后一个snapshot的configuration
     rv = uvSnapshotLoadMeta(uv, meta, snapshot, errmsg);
     if (rv != 0) {
         return rv;
     }
+    //读取出raft_snapshot的bufs、n_bufs
     rv = uvSnapshotLoadData(uv, meta, snapshot, errmsg);
     if (rv != 0) {
         return rv;
@@ -503,6 +508,7 @@ static int makeFileCompressed(const char *dir,
 
 static void uvSnapshotPutWorkCb(uv_work_t *work)
 {
+    printf("uvSnapshotWorkCbXXXXXXXXXXXXXXXXXXXXXXXXXXX\n");
     struct uvSnapshotPut *put = work->data;
     struct uv *uv = put->uv;
     char metadata[UV__FILENAME_LEN];
@@ -524,7 +530,7 @@ static void uvSnapshotPutWorkCb(uv_work_t *work)
     sprintf(snapshot, UV__SNAPSHOT_TEMPLATE, put->snapshot->term,
             put->snapshot->index, put->meta.timestamp);
 
-    tracef("snapshot write start");
+    printf("snapshot write start snapshot_compression %d\n",uv->snapshot_compression);
     if (uv->snapshot_compression) {
         rv = makeFileCompressed(uv->dir, snapshot, put->snapshot->bufs,
                                 put->snapshot->n_bufs, put->errmsg);
@@ -532,6 +538,8 @@ static void uvSnapshotPutWorkCb(uv_work_t *work)
         rv = UvFsMakeFile(uv->dir, snapshot, put->snapshot->bufs,
                           put->snapshot->n_bufs, put->errmsg);
     }
+
+    //TODO 每个进程执行到此处的时候，都直接退出，Linux下是如何执行退出操作？
     tracef("snapshot write end %d", rv);
 
     if (rv != 0) {
@@ -571,11 +579,13 @@ static void uvSnapshotPutFinish(struct uvSnapshotPut *put)
     assert(uv->snapshot_put_work.data == NULL);
     RaftHeapFree(put->meta.bufs[1].base);
     RaftHeapFree(put);
+    printf("takeSnapshot callback\n");
     req->cb(req, status);
 }
 
 static void uvSnapshotPutAfterWorkCb(uv_work_t *work, int status)
 {
+    printf("uvSnapshotPutAfterWorkCbYYYYYYYYYYYYYYYYYYYYYYYYY\n");
     struct uvSnapshotPut *put = work->data;
     struct uv *uv = put->uv;
     assert(status == 0);
@@ -607,6 +617,7 @@ static void uvSnapshotPutStart(struct uvSnapshotPut *put)
 
 static void uvSnapshotPutBarrierCb(struct UvBarrier *barrier)
 {
+    printf("uvSnapshotPutBarrierCb Call\n");
     struct uvSnapshotPut *put = barrier->data;
     if (put == NULL) {
         return;
@@ -631,6 +642,12 @@ int UvSnapshotPut(struct raft_io *io,
                   const struct raft_snapshot *snapshot,
                   raft_io_snapshot_put_cb cb)
 {
+    //传来的参数
+    //raft_io_snapshot_put是r.snapshot.put，and r.snapshot.put.data
+    //raft_snapshot是就是snapshot
+    //cb被包装到raft_snapshot里面去了
+    printf("snapshot info n_bufs %d, snapshot_index %d, snapshot_configuration_index %d\n",
+           snapshot->n_bufs, snapshot->index, snapshot->configuration_index);
     struct uv *uv;
     struct uvSnapshotPut *put;
     void *cursor;
@@ -663,6 +680,8 @@ int UvSnapshotPut(struct raft_io *io,
     req->cb = cb;
 
     /* Prepare the buffers for the metadata file. */
+
+    //TODO 初始化，预先给buf[0]的base和len占位？
     put->meta.bufs[0].base = put->meta.header;
     put->meta.bufs[0].len = sizeof put->meta.header;
 
@@ -672,10 +691,12 @@ int UvSnapshotPut(struct raft_io *io,
     }
 
     cursor = put->meta.header;
+    //先把这四个数据输出一下
     bytePut64(&cursor, UV__DISK_FORMAT);
     bytePut64(&cursor, 0);
     bytePut64(&cursor, snapshot->configuration_index);
     bytePut64(&cursor, put->meta.bufs[1].len);
+    //TODO 经过上面这个编码之后，再去输出put->meta.header的四个数据？应该就是对应的那四个数字
 
     crc = byteCrc32(&put->meta.header[2], sizeof(uint64_t) * 2, 0);
     crc = byteCrc32(put->meta.bufs[1].base, put->meta.bufs[1].len, crc);
@@ -692,6 +713,9 @@ int UvSnapshotPut(struct raft_io *io,
      * and we don't change append_next_index. */
     next_index =
         (trailing == 0) ? (snapshot->index + 1) : uv->append_next_index;
+    //TODO uv->append_next_index怎么来的，那里包装的呢？
+    printf("UvBarrier Call=================================\n");
+    //put.barrier.data = put（req，snapshot，req.cb = cb）
     rv = UvBarrier(uv, next_index, &put->barrier, uvSnapshotPutBarrierCb);
     if (rv != 0) {
         goto err_after_configuration_encode;

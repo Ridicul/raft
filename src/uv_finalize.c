@@ -6,7 +6,7 @@
 
 #define tracef(...) Tracef(uv->tracer, __VA_ARGS__)
 
-/* Metadata about an open segment not used anymore and that should be closed or
+/*  Metadata about an open segmentnot used anymore and that should be closed or
  * remove (if not written at all). */
 struct uvDyingSegment
 {
@@ -33,6 +33,7 @@ static void uvFinalizeWorkCb(uv_work_t *work)
     int rv;
 
     sprintf(filename1, UV__OPEN_TEMPLATE, segment->counter);
+    //这是怎么来render filename ? 
     sprintf(filename2, UV__CLOSED_TEMPLATE, segment->first_index,
             segment->last_index);
 
@@ -47,7 +48,7 @@ static void uvFinalizeWorkCb(uv_work_t *work)
         }
         goto sync;
     }
-
+    printf("uvFianlizeWorkCb call the UvFsTruncateAndRenameFile filename1 %s, filename2 %s\n",filename1,filename2);
     /* Truncate and rename the segment.*/
     rv = UvFsTruncateAndRenameFile(uv->dir, segment->used, filename1, filename2,
                                    errmsg);
@@ -73,6 +74,7 @@ err:
 static int uvFinalizeStart(struct uvDyingSegment *segment);
 static void uvFinalizeAfterWorkCb(uv_work_t *work, int status)
 {
+    printf("uvFinalizeAfterWorkCb\n");
     struct uvDyingSegment *segment = work->data;
     struct uv *uv = segment->uv;
     queue *head;
@@ -89,6 +91,7 @@ static void uvFinalizeAfterWorkCb(uv_work_t *work, int status)
      * barrier to unblock or if we are done closing. */
     if (QUEUE_IS_EMPTY(&uv->finalize_reqs)) {
         if (uv->barrier != NULL && UvBarrierReady(uv)) {
+            printf("uvBarrierClose\n");
             uv->barrier->cb(uv->barrier);
         }
         uvMaybeFireCloseCb(uv);
@@ -110,6 +113,7 @@ static void uvFinalizeAfterWorkCb(uv_work_t *work, int status)
 /* Start finalizing an open segment. */
 static int uvFinalizeStart(struct uvDyingSegment *segment)
 {
+    printf("uvFinalizeStart\n");
     struct uv *uv = segment->uv;
     int rv;
 
@@ -135,6 +139,7 @@ int UvFinalize(struct uv *uv,
                raft_index first_index,
                raft_index last_index)
 {
+    printf("UvFinalize\n");
     struct uvDyingSegment *segment;
     int rv;
 

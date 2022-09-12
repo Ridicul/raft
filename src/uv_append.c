@@ -684,6 +684,7 @@ err:
  * requests get completed. */
 static void uvFinalizeCurrentAliveSegmentOnceIdle(struct uv *uv)
 {
+    printf("uvFinalizeCurrentAliveSegmentOnceIdle\n");
     struct uvAliveSegment *s;
     queue *head;
     bool has_pending_reqs;
@@ -714,6 +715,7 @@ static void uvFinalizeCurrentAliveSegmentOnceIdle(struct uv *uv)
      * TODO: is it actually possible to have pending requests with no writing
      * requests? Probably no. */
     if (!has_pending_reqs && !has_writing_reqs) {
+        printf("uvAliveSegmentFinalize\n");
         uvAliveSegmentFinalize(s);
     } else {
         s->finalize = true;
@@ -737,7 +739,7 @@ bool UvBarrierReady(struct uv *uv)
     }
     return true;
 }
-
+//UvTruncate，UvSnapshotPut调用，会阻塞新的写请求？
 int UvBarrier(struct uv *uv,
               raft_index next_index,
               struct UvBarrier *barrier,
@@ -748,6 +750,7 @@ int UvBarrier(struct uv *uv,
     assert(!uv->closing);
 
     /* The next entry will be appended at this index. */
+    //目的是？
     uv->append_next_index = next_index;
 
     /* Arrange for all open segments not already involved in other barriers to
@@ -755,23 +758,31 @@ int UvBarrier(struct uv *uv,
      * as involved in this specific barrier request.  */
     QUEUE_FOREACH(head, &uv->append_segments)
     {
+
+        printf("QUEUE_FOREACH(head, &uv->append_segments)\n");
         struct uvAliveSegment *segment;
         segment = QUEUE_DATA(head, struct uvAliveSegment, queue);
         if (segment->barrier != NULL) {
             continue;
         }
         segment->barrier = barrier;
+
         if (segment == uvGetCurrentAliveSegment(uv)) {
+            //如果当前没有被阻塞的段，就是当前正在写入的段？
             uvFinalizeCurrentAliveSegmentOnceIdle(uv);
             continue;
         }
+        //标志位？表明该段的writing请求完成，标志为回收状态？
+        //TODO 找到什么地方会被修改？
         segment->finalize = true;
     }
 
-    barrier->cb = cb;
-
+    barrier->cb = cb;//这个uvSnapshotPutBarrierCb在那里调用的还不知道？
+    printf("barrier->cb = cb\n");
+    //uv->barrier 和 segment->barrier的区别？
     if (uv->barrier == NULL) {
         uv->barrier = barrier;
+        printf("uv->barrier = barrier;\n");
         /* If there's no pending append-related activity, we can fire the
          * callback immediately.
          *
@@ -779,6 +790,7 @@ int UvBarrier(struct uv *uv,
         if (QUEUE_IS_EMPTY(&uv->append_segments) &&
             QUEUE_IS_EMPTY(&uv->finalize_reqs) &&
             uv->finalize_work.data == NULL) {
+            printf("barrier->cb(barrier);\n");
             barrier->cb(barrier);
         }
     }

@@ -31,6 +31,7 @@ int recvAppendEntriesResult(struct raft *r,
     }
 
     rv = recvEnsureMatchingTerms(r, result->term, &match);
+
     if (rv != 0) {
         return rv;
     }
@@ -56,6 +57,7 @@ int recvAppendEntriesResult(struct raft *r,
 
     /* Ignore responses from servers that have been removed */
     server = configurationGet(&r->configuration, id);
+
     if (server == NULL) {
         tracef("unknown server -> ignore");
         return 0;

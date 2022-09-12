@@ -8,7 +8,9 @@
 static const char *uvListIgnored[] = {".", "..", "metadata1", "metadata2",
                                       NULL};
 
-/* Return true if the given filename should be ignored. */
+/* Return true if the given filename should be ignored.
+ * 如果给定的文件名是uvListIgnored其中之一，则忽略ignored
+ * */
 static bool uvListShouldIgnore(const char *filename)
 {
     const char **cursor = uvListIgnored;
@@ -81,9 +83,10 @@ int UvList(struct uv *uv,
             if (rv == 0) {
                 tracef("snapshot %s", filename);
             }
+
             continue;
         }
-
+        //appended false rv == 0判断是不是segment
         /* Append to the segment list if it's a segment filename */
         rv = uvSegmentInfoAppendIfMatch(entry.name, segments, n_segments,
                                         &appended);

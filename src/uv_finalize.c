@@ -74,7 +74,6 @@ err:
 static int uvFinalizeStart(struct uvDyingSegment *segment);
 static void uvFinalizeAfterWorkCb(uv_work_t *work, int status)
 {
-    printf("uvFinalizeAfterWorkCb\n");
     struct uvDyingSegment *segment = work->data;
     struct uv *uv = segment->uv;
     queue *head;
@@ -110,7 +109,8 @@ static void uvFinalizeAfterWorkCb(uv_work_t *work, int status)
     }
 }
 
-/* Start finalizing an open segment. */
+/* Start finalizing an open segment.
+ * 开始结束一个open segment，让他变成closed segment？*/
 static int uvFinalizeStart(struct uvDyingSegment *segment)
 {
     printf("uvFinalizeStart\n");
@@ -139,7 +139,6 @@ int UvFinalize(struct uv *uv,
                raft_index first_index,
                raft_index last_index)
 {
-    printf("UvFinalize\n");
     struct uvDyingSegment *segment;
     int rv;
 

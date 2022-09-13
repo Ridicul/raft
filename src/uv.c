@@ -488,7 +488,6 @@ static int uvLoad(struct raft_io *io,
                   struct raft_entry **entries,
                   size_t *n_entries)
 {
-    printf("uvLoad\n");
     struct uv *uv;
     int rv;
     uv = io->impl;

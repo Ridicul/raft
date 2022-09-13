@@ -41,6 +41,7 @@
  **/
 
 /* An open segment being written or waiting to be written. */
+/* 代表着UV__OPEN_TEMPLATE "open-%llu"的一些状态？ */
 struct uvAliveSegment
 {
     struct uv *uv;                  /* Our writer */
@@ -188,7 +189,6 @@ static int uvAliveSegmentEncodeEntriesToWriteBuf(struct uvAliveSegment *segment,
 static int uvAppendMaybeStart(struct uv *uv);
 static void uvAliveSegmentWriteCb(struct UvWriterReq *write, const int status)
 {
-    printf("uvAliveSegmentWriteCb\n");
     struct uvAliveSegment *s = write->data;
     struct uv *uv = s->uv;
     unsigned n_blocks;
@@ -484,7 +484,7 @@ static void uvAliveSegmentInit(struct uvAliveSegment *s, struct uv *uv)
     s->prepare.data = s;
     s->writer.data = s;
     s->write.data = s;
-    s->counter = 0;
+    s->counter = 0;//初始化为0？
     s->first_index = uv->append_next_index;
     s->pending_last_index = s->first_index - 1;
     s->last_index = 0;
@@ -498,7 +498,8 @@ static void uvAliveSegmentInit(struct uvAliveSegment *s, struct uv *uv)
 
 /* Add a new active open segment, since the append request being submitted does
  * not fit in the last segment we scheduled writes for, or no segment had been
- * previously requested at all. */
+ * previously requested at all.
+ * 添加一个新的活动open段，因为正在提交的附加请求不适合我们计划写入的最后一个段，或者之前根本没有请求任何段。*/
 static int uvAppendPushAliveSegment(struct uv *uv)
 {
     struct uvAliveSegment *segment;
@@ -513,8 +514,8 @@ static int uvAppendPushAliveSegment(struct uv *uv)
     }
     uvAliveSegmentInit(segment, uv);
 
-    QUEUE_PUSH(&uv->append_segments, &segment->queue);
-
+    QUEUE_PUSH(&uv->append_segments, &segment->queue);//问题，这个segment->queue被初始化什么了？
+    //调用时counter为0，segment->prepare为NULL
     rv = UvPrepare(uv, &fd, &counter, &segment->prepare,
                    uvAliveSegmentPrepareCb);
     if (rv != 0) {
@@ -522,7 +523,8 @@ static int uvAppendPushAliveSegment(struct uv *uv)
     }
 
     /* If we've been returned a ready prepared segment right away, start writing
-     * to it immediately. */
+     * to it immediately.
+     * 如果我们立即返回了一个准备好的段，请立即开始对其进行写入。*/
     if (fd != -1) {
         rv = uvAliveSegmentReady(uv, fd, counter, segment);
         if (rv != 0) {
@@ -600,11 +602,11 @@ static int uvAppendEnqueueRequest(struct uv *uv, struct uvAppend *append)
     /* If we have no segments yet, it means this is the very first append, and
      * we need to add a new segment. Otherwise we check if the last segment has
      * enough room for this batch of entries. */
-    segment = uvGetLastAliveSegment(uv);
+    segment = uvGetLastAliveSegment(uv);//uv->append_segments队列存放的就是uvAliveSegment
     if (segment == NULL || segment->finalize) {
         fits = false;
     } else {
-        fits = uvAliveSegmentHasEnoughSpareCapacity(segment, size);
+        fits = uvAliveSegmentHasEnoughSpareCapacity(segment, size);//检查该segment容量是否够！
         if (!fits) {
             segment->finalize = true; /* Finalize when all writes are done */
         }

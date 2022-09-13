@@ -52,7 +52,7 @@ static void uvPrepareWorkCb(uv_work_t *work)
     struct uvIdleSegment *segment = work->data;
     struct uv *uv = segment->uv;
     int rv;
-
+    //创建文件，分配大小，文件必须事先不存在，然后返回文件描述符
     rv = UvFsAllocateFile(uv->dir, segment->filename, segment->size,
                           &segment->fd, segment->errmsg);
     if (rv != 0) {
@@ -123,7 +123,7 @@ static void uvPrepareFinishOldestRequest(struct uv *uv)
 
     /* Finish the request */
     uvPrepareConsume(uv, &req->fd, &req->counter);
-    req->cb(req, 0);
+    req->cb(req, 0);//uvAliveSegmentPrepareCb这个函数？
 }
 
 /* Return the number of ready prepared open segments in the pool. */
@@ -139,14 +139,17 @@ static unsigned uvPrepareCount(struct uv *uv)
 static void uvPrepareAfterWorkCb(uv_work_t *work, int status);
 
 /* Start creating a new segment file. */
+/* 创建了一个uvIdleSegment结构体！
+ *
+ *
+ * TODO uvIdleSegment 和 uvAliveSegment的区别？*/
 static int uvPrepareStart(struct uv *uv)
 {
-    printf("uvPrepareStart\n");
     struct uvIdleSegment *segment;
     int rv;
 
     assert(uv->prepare_inflight == NULL);
-    assert(uvPrepareCount(uv) < UV__TARGET_POOL_SIZE);
+    assert(uvPrepareCount(uv) < UV__TARGET_POOL_SIZE);//要保证prepare_pool里面的个数要小于UV__TARGET_POOL_SIZE
 
     segment = RaftHeapMalloc(sizeof *segment);
     if (segment == NULL) {
@@ -156,13 +159,14 @@ static int uvPrepareStart(struct uv *uv)
 
     memset(segment, 0, sizeof *segment);
     segment->uv = uv;
-    segment->counter = uv->prepare_next_counter;
+    segment->counter = uv->prepare_next_counter;//相当于open_segment的下标吗？1是最开始创建的，每创建一次uvIdleSegment，prepare_next_counter++
     segment->work.data = segment;
     segment->fd = -1;
     segment->size = uv->block_size * uvSegmentBlocks(uv);
     sprintf(segment->filename, UV__OPEN_TEMPLATE, segment->counter);
 
     tracef("create open segment %s", segment->filename);
+    //uv_queue_work不知道在干嘛，先执行uvPrepareWorkCb，后uvPrepareAfterWorkCb
     rv = uv_queue_work(uv->loop, &segment->work, uvPrepareWorkCb,
                        uvPrepareAfterWorkCb);
     if (rv != 0) {
@@ -192,6 +196,7 @@ static void uvPrepareAfterWorkCb(uv_work_t *work, int status)
     int rv;
     assert(status == 0);
 
+    //到这里说明prepare的segment创建完成，prepare_inflight置为NULL
     uv->prepare_inflight = NULL; /* Reset the creation in-progress marker. */
 
     /* If we are closing, let's discard the segment. All pending requests have
@@ -227,7 +232,7 @@ static void uvPrepareAfterWorkCb(uv_work_t *work, int status)
     }
 
     assert(segment->fd >= 0);
-
+    //前面两个判断的断言过后说明创建完全成功
     tracef("completed creation of %s", segment->filename);
     QUEUE_PUSH(&uv->prepare_pool, &segment->queue);
 
@@ -280,19 +285,21 @@ int UvPrepare(struct uv *uv,
     int rv;
 
     assert(!uv->closing);
-
+    //如果prepare_pool不为空，返回prepare_pool中准备好的不为空的段返回fd、counter
     if (!QUEUE_IS_EMPTY(&uv->prepare_pool)) {
         uvPrepareConsume(uv, fd, counter);
         goto maybe_start;
     }
-
+    //如果prepare_pool为空
     *fd = -1;
     *counter = 0;
     req->cb = cb;
+    //此处的req即等待创建的&segment->prepare
     QUEUE_PUSH(&uv->prepare_reqs, &req->queue);
 
 maybe_start:
-    /* If we are already creating a segment, let's just wait. */
+    /* If we are already creating a segment, let's just wait.
+     * 如果此时正在创建open segment，那么请等待！*/
     if (uv->prepare_inflight != NULL) {
         return 0;
     }
